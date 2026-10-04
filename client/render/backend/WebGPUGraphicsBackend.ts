@@ -55,6 +55,7 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
     private resources?: WebGPUBackendResources;
     private canvasResources?: WebGPUCanvasResources;
     private disposed = false;
+    private deviceGeneration = 0;
     private uncapturedErrorListener?: (event: { error?: { message?: string } }) => void;
     private options: WebGPUBackendOptions = {};
 
@@ -84,6 +85,7 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
         this.dispose();
         this.disposed = false;
         this.options = options;
+        const generation = this.deviceGeneration;
 
         const api = this.apiOverride ?? getBrowserWebGPUApi();
         if (!api) {
@@ -108,7 +110,11 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
         device.addEventListener?.("uncapturederror", this.uncapturedErrorListener);
 
         void device.lost.then((info) => {
-            if (this.disposed) {
+            if (
+                this.disposed ||
+                generation !== this.deviceGeneration ||
+                this.resources?.device !== device
+            ) {
                 return;
             }
             const reason = info.reason || "unknown";
@@ -193,6 +199,7 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
 
     dispose(): void {
         this.disposed = true;
+        this.deviceGeneration++;
 
         const device = this.resources?.device;
         if (device && this.uncapturedErrorListener) {
