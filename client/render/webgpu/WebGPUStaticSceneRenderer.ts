@@ -54,6 +54,8 @@ export class WebGPUStaticSceneRenderer {
     private terrainAlphaNoCullPipeline?: WebGPURenderPipelineLike;
     private locOpaqueCullPipeline?: WebGPURenderPipelineLike;
     private locOpaqueNoCullPipeline?: WebGPURenderPipelineLike;
+    private locAlphaCullPipeline?: WebGPURenderPipelineLike;
+    private locAlphaNoCullPipeline?: WebGPURenderPipelineLike;
     private depthTexture?: WebGPUTextureLike;
     private depthWidth = 0;
     private depthHeight = 0;
@@ -61,6 +63,7 @@ export class WebGPUStaticSceneRenderer {
     private locsById = new Map<number, WebGPUStaticLocResources>();
     private mapOrder: number[] = [];
     private visibleMapOrder: number[] = [];
+    private visibleMapLod: number[] = [];
     private visibilityFilterEnabled = false;
 
     constructor(readonly backend: WebGPUGraphicsBackend) {}
@@ -280,7 +283,9 @@ export class WebGPUStaticSceneRenderer {
         });
         const createLocPipeline = (
             label: string,
+            fragmentEntryPoint: "fsMain" | "fsMainAlpha",
             cullMode: "back" | "none",
+            transparent: boolean,
         ): WebGPURenderPipelineLike =>
             device.createRenderPipeline({
                 label,
@@ -304,8 +309,12 @@ export class WebGPUStaticSceneRenderer {
                 },
                 fragment: {
                     module,
-                    entryPoint: "fsMain",
-                    targets: [{ format: canvasResources.format }],
+                    entryPoint: fragmentEntryPoint,
+                    targets: [
+                        transparent
+                            ? { format: canvasResources.format, blend: alphaBlend }
+                            : { format: canvasResources.format },
+                    ],
                 },
                 primitive: {
                     topology: "triangle-list",
@@ -314,17 +323,34 @@ export class WebGPUStaticSceneRenderer {
                 },
                 depthStencil: {
                     format: "depth24plus",
+                    // Match WebGL: transparent geometry still writes depth.
                     depthWriteEnabled: true,
                     depthCompare: "less-equal",
                 },
             });
         const locOpaqueCullPipeline = createLocPipeline(
             "static-loc-opaque-cull-pipeline",
+            "fsMain",
             "back",
+            false,
         );
         const locOpaqueNoCullPipeline = createLocPipeline(
             "static-loc-opaque-no-cull-pipeline",
+            "fsMain",
             "none",
+            false,
+        );
+        const locAlphaCullPipeline = createLocPipeline(
+            "static-loc-alpha-cull-pipeline",
+            "fsMainAlpha",
+            "back",
+            true,
+        );
+        const locAlphaNoCullPipeline = createLocPipeline(
+            "static-loc-alpha-no-cull-pipeline",
+            "fsMainAlpha",
+            "none",
+            true,
         );
 
         this.sceneBindGroupLayout = sceneBindGroupLayout;
@@ -348,6 +374,8 @@ export class WebGPUStaticSceneRenderer {
         this.terrainAlphaNoCullPipeline = terrainAlphaNoCullPipeline;
         this.locOpaqueCullPipeline = locOpaqueCullPipeline;
         this.locOpaqueNoCullPipeline = locOpaqueNoCullPipeline;
+        this.locAlphaCullPipeline = locAlphaCullPipeline;
+        this.locAlphaNoCullPipeline = locAlphaNoCullPipeline;
 
         this.resize(canvas.width, canvas.height);
     }
@@ -441,12 +469,20 @@ export class WebGPUStaticSceneRenderer {
         const locBindGroupLayout = this.locBindGroupLayout;
         const locData = (data as any).loc;
         const heightMapTextureData = (data as any).heightMapTextureData as Int16Array | undefined;
+        const hasLocDraws =
+            locData &&
+            [
+                locData.drawRanges,
+                locData.drawRangesAlpha,
+                locData.drawRangesLod,
+                locData.drawRangesLodAlpha,
+            ].some((ranges: readonly unknown[] | undefined) => (ranges?.length ?? 0) > 0);
         if (
             locBindGroupLayout &&
             locData &&
             locData.vertices?.length > 0 &&
             locData.indices?.length > 0 &&
-            locData.drawRanges?.length > 0 &&
+            hasLocDraws &&
             heightMapTextureData &&
             heightMapTextureData.length > 0
         ) {
@@ -489,19 +525,34 @@ export class WebGPUStaticSceneRenderer {
         this.locsById.clear();
         this.mapOrder.length = 0;
         this.visibleMapOrder.length = 0;
+        this.visibleMapLod.length = 0;
     }
 
     setVisibleTerrainMaps(
         maps: readonly { mapX: number; mapY: number }[],
         count: number,
     ): void {
+        this.setVisibleSceneMaps(maps, [], count);
+    }
+
+    setVisibleSceneMaps(
+        maps: readonly { mapX: number; mapY: number }[],
+        lodFlags: readonly number[],
+        count: number,
+    ): void {
         this.visibilityFilterEnabled = true;
         const limit = Math.min(Math.max(0, count | 0), maps.length);
         this.visibleMapOrder.length = limit;
+        this.visibleMapLod.length = limit;
         for (let i = 0; i < limit; i++) {
             const map = maps[i];
             this.visibleMapOrder[i] = this.mapId(map.mapX, map.mapY);
+            this.visibleMapLod[i] = lodFlags[i] ? 1 : 0;
         }
+    }
+
+    private mapUsesLod(orderIndex: number): boolean {
+        return this.visibilityFilterEnabled && this.visibleMapLod[orderIndex] === 1;
     }
 
     private drawOpaqueScene(
@@ -517,11 +568,13 @@ export class WebGPUStaticSceneRenderer {
             if (!map) {
                 continue;
             }
+            const lod = this.mapUsesLod(i);
 
             pass.setPipeline(terrainPipeline);
             pass.setVertexBuffer(0, map.vertexBuffer);
             pass.setIndexBuffer(map.indexBuffer, "uint32");
-            for (const draw of map.draws) {
+            const terrainDraws = lod ? map.lodDraws : map.draws;
+            for (const draw of terrainDraws) {
                 if (draw.plane > frame.roofPlaneLimit) {
                     continue;
                 }
@@ -536,15 +589,16 @@ export class WebGPUStaticSceneRenderer {
             }
 
             const locs = this.locsById.get(id);
-            if (!locs || locs.draws.length === 0) {
+            const locPass = locs?.getPass(false, lod);
+            if (!locs || !locPass || locPass.draws.length === 0) {
                 continue;
             }
             pass.setPipeline(locPipeline);
             pass.setBindGroup(1, map.sharedMapBindGroup);
-            pass.setBindGroup(4, locs.bindGroup);
+            pass.setBindGroup(4, locPass.bindGroup);
             pass.setVertexBuffer(0, locs.vertexBuffer);
             pass.setIndexBuffer(locs.indexBuffer, "uint32");
-            for (const draw of locs.draws) {
+            for (const draw of locPass.draws) {
                 if (draw.plane > frame.roofPlaneLimit) {
                     continue;
                 }
@@ -559,26 +613,26 @@ export class WebGPUStaticSceneRenderer {
         }
     }
 
-    private drawTerrainPass(
+    private drawTransparentScene(
         pass: WebGPURenderPassEncoderLike,
         frame: SceneFrameDescription,
-        transparent: boolean,
+        terrainPipeline: WebGPURenderPipelineLike,
+        locPipeline: WebGPURenderPipelineLike,
     ): void {
         const order = this.visibilityFilterEnabled ? this.visibleMapOrder : this.mapOrder;
-        const start = transparent ? order.length - 1 : 0;
-        const end = transparent ? -1 : order.length;
-        const step = transparent ? -1 : 1;
-
-        for (let i = start; i !== end; i += step) {
-            const map = this.mapsById.get(order[i]);
+        for (let i = order.length - 1; i >= 0; i--) {
+            const id = order[i];
+            const map = this.mapsById.get(id);
             if (!map) {
                 continue;
             }
+            const lod = this.mapUsesLod(i);
 
+            pass.setPipeline(terrainPipeline);
             pass.setVertexBuffer(0, map.vertexBuffer);
             pass.setIndexBuffer(map.indexBuffer, "uint32");
-            const draws = transparent ? map.alphaDraws : map.draws;
-            for (const draw of draws) {
+            const terrainDraws = lod ? map.lodAlphaDraws : map.alphaDraws;
+            for (const draw of terrainDraws) {
                 if (draw.plane > frame.roofPlaneLimit) {
                     continue;
                 }
@@ -589,6 +643,29 @@ export class WebGPUStaticSceneRenderer {
                     draw.firstIndex,
                     0,
                     0,
+                );
+            }
+
+            const locs = this.locsById.get(id);
+            const locPass = locs?.getPass(true, lod);
+            if (!locs || !locPass || locPass.draws.length === 0) {
+                continue;
+            }
+            pass.setPipeline(locPipeline);
+            pass.setBindGroup(1, map.sharedMapBindGroup);
+            pass.setBindGroup(4, locPass.bindGroup);
+            pass.setVertexBuffer(0, locs.vertexBuffer);
+            pass.setIndexBuffer(locs.indexBuffer, "uint32");
+            for (const draw of locPass.draws) {
+                if (draw.plane > frame.roofPlaneLimit) {
+                    continue;
+                }
+                pass.drawIndexed(
+                    draw.indexCount,
+                    draw.instanceCount,
+                    draw.firstIndex,
+                    0,
+                    draw.firstInstance,
                 );
             }
         }
@@ -607,9 +684,12 @@ export class WebGPUStaticSceneRenderer {
             getWebGPUTerrainPipelineVariant(true, frame.cullBackFace) === "alpha-cull"
                 ? this.terrainAlphaCullPipeline
                 : this.terrainAlphaNoCullPipeline;
-        const locPipeline = frame.cullBackFace
+        const locOpaquePipeline = frame.cullBackFace
             ? this.locOpaqueCullPipeline
             : this.locOpaqueNoCullPipeline;
+        const locAlphaPipeline = frame.cullBackFace
+            ? this.locAlphaCullPipeline
+            : this.locAlphaNoCullPipeline;
         const terrainTextures = this.terrainTextures;
         const waterResources = this.waterResources;
         const depthTexture = this.depthTexture;
@@ -620,7 +700,8 @@ export class WebGPUStaticSceneRenderer {
             !sceneBindGroup ||
             !opaquePipeline ||
             !alphaPipeline ||
-            !locPipeline ||
+            !locOpaquePipeline ||
+            !locAlphaPipeline ||
             !terrainTextures ||
             !waterResources ||
             !depthTexture
@@ -682,11 +763,8 @@ export class WebGPUStaticSceneRenderer {
             );
         }
 
-        this.drawOpaqueScene(pass, frame, opaquePipeline, locPipeline);
-
-        // WebGL traverses visible map squares in reverse for the alpha pass.
-        pass.setPipeline(alphaPipeline);
-        this.drawTerrainPass(pass, frame, true);
+        this.drawOpaqueScene(pass, frame, opaquePipeline, locOpaquePipeline);
+        this.drawTransparentScene(pass, frame, alphaPipeline, locAlphaPipeline);
 
         pass.end();
         device.queue.submit([encoder.finish()]);
@@ -714,11 +792,14 @@ export class WebGPUStaticSceneRenderer {
         this.terrainAlphaNoCullPipeline = undefined;
         this.locOpaqueCullPipeline = undefined;
         this.locOpaqueNoCullPipeline = undefined;
+        this.locAlphaCullPipeline = undefined;
+        this.locAlphaNoCullPipeline = undefined;
         this.device = undefined;
         this.depthWidth = 0;
         this.depthHeight = 0;
         this.visibilityFilterEnabled = false;
         this.visibleMapOrder.length = 0;
+        this.visibleMapLod.length = 0;
         this.mapOrder.length = 0;
         this.mapsById.clear();
         this.locsById.clear();
