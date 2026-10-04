@@ -50,9 +50,6 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     state.pendingTextures.clear();
     state.pendingMaps.clear();
     state.canvas.style.display = "none";
-    state.pendingTextures.clear();
-    state.pendingMaps.clear();
-    state.ready = false;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     const message = reason instanceof Error ? reason.message : String(reason);
