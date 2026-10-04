@@ -17,15 +17,22 @@ interface TerrainComparisonState {
     renderer: WebGPUStaticSceneRenderer;
     previousOnMapRemoved?: (mapX: number, mapY: number) => void;
     mapRemovedWrapper?: (mapX: number, mapY: number) => void;
+    restoreMapObservers?: () => void;
     ready: boolean;
     failed: boolean;
     pendingTextures: Map<number, Int32Array>;
     pendingMaps: Map<string, { mapData: SdMapData; loadTime: number }>;
+    queuedPartialMaps: Map<string, SdMapData>;
+    acceptedPartialMaps: Map<string, SdMapData>;
     visibleMaps: VisibleComparisonMap[];
     visibleMapLod: number[];
 }
 
 const states = new WeakMap<object, TerrainComparisonState>();
+
+function mapKey(mapX: number, mapY: number): string {
+    return `${mapX | 0}:${mapY | 0}`;
+}
 
 export function isWebGPUTerrainComparisonRequested(search: string): boolean {
     const params = new URLSearchParams(search);
@@ -49,13 +56,31 @@ function configureComparisonCanvas(canvas: HTMLCanvasElement): void {
     canvas.style.clipPath = "inset(0 0 0 50%)";
 }
 
+function restoreComparisonHooks(
+    host: WebGLOsrsRenderer,
+    state: TerrainComparisonState,
+): void {
+    if (
+        state.mapRemovedWrapper &&
+        host.mapManager.onMapRemoved === state.mapRemovedWrapper
+    ) {
+        host.mapManager.onMapRemoved = state.previousOnMapRemoved;
+    }
+    state.mapRemovedWrapper = undefined;
+    state.restoreMapObservers?.();
+    state.restoreMapObservers = undefined;
+}
+
 function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     const state = states.get(host);
     if (!state || state.failed) return;
     state.failed = true;
     state.ready = false;
+    restoreComparisonHooks(host, state);
     state.pendingTextures.clear();
     state.pendingMaps.clear();
+    state.queuedPartialMaps.clear();
+    state.acceptedPartialMaps.clear();
     state.visibleMaps.length = 0;
     state.visibleMapLod.length = 0;
     state.canvas.style.display = "none";
@@ -65,6 +90,85 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     console.warn(
         `[WebGPU terrain comparison] Disabled; WebGL2 remains authoritative: ${message}`,
     );
+}
+
+function applyAcceptedPartialUpdate(
+    host: WebGLOsrsRenderer,
+    state: TerrainComparisonState,
+    mapData: SdMapData,
+): void {
+    if (state.failed || !state.ready || mapData.mapX >= 200) return;
+    if (!host.mapManager.getMap(mapData.mapX, mapData.mapY)) return;
+
+    state.renderer.updateTerrainTextures(mapData.loadedTextures);
+    if (mapData.locOnly) {
+        state.renderer.replaceLocGeometry(mapData);
+    } else if (mapData.doorOnly) {
+        state.renderer.replaceDoorGeometry(mapData);
+    }
+}
+
+function installPartialMapObservers(
+    host: WebGLOsrsRenderer,
+    state: TerrainComparisonState,
+): void {
+    const queue = host.mapsToLoad as unknown as {
+        push: (mapData: SdMapData) => number;
+    };
+    const mapManager = host.mapManager as unknown as {
+        addMap: (...args: any[]) => any;
+    };
+    const previousPush = queue.push;
+    const previousAddMap = mapManager.addMap;
+
+    const pushWrapper = function (this: unknown, mapData: SdMapData): number {
+        const key = mapKey(mapData.mapX, mapData.mapY);
+        if (mapData.locOnly || mapData.doorOnly) {
+            state.queuedPartialMaps.set(key, mapData);
+        } else {
+            // A full map payload supersedes any partial payload that did not commit.
+            state.queuedPartialMaps.delete(key);
+            state.acceptedPartialMaps.delete(key);
+        }
+        return previousPush.call(this, mapData);
+    };
+
+    const addMapWrapper = function (this: unknown, ...args: any[]): any {
+        const result = previousAddMap.apply(this, args);
+        const mapX = args[0] | 0;
+        const mapY = args[1] | 0;
+        const key = mapKey(mapX, mapY);
+        const partial = state.queuedPartialMaps.get(key);
+        if (!partial) {
+            return result;
+        }
+
+        state.queuedPartialMaps.delete(key);
+        if (!state.ready) {
+            state.acceptedPartialMaps.set(key, partial);
+            return result;
+        }
+
+        try {
+            applyAcceptedPartialUpdate(host, state, partial);
+        } catch (error) {
+            disableComparison(host, error);
+        }
+        return result;
+    };
+
+    queue.push = pushWrapper;
+    mapManager.addMap = addMapWrapper;
+    state.restoreMapObservers = () => {
+        if (queue.push === pushWrapper) {
+            queue.push = previousPush;
+        }
+        if (mapManager.addMap === addMapWrapper) {
+            mapManager.addMap = previousAddMap;
+        }
+        state.queuedPartialMaps.clear();
+        state.acceptedPartialMaps.clear();
+    };
 }
 
 export async function initWebGPUTerrainComparison(
@@ -97,10 +201,13 @@ export async function initWebGPUTerrainComparison(
         failed: false,
         pendingTextures: new Map(),
         pendingMaps: new Map(),
+        queuedPartialMaps: new Map(),
+        acceptedPartialMaps: new Map(),
         visibleMaps: [],
         visibleMapLod: [],
     };
     states.set(host, state);
+    installPartialMapObservers(host, state);
 
     try {
         await backend.init({
@@ -145,6 +252,9 @@ export async function initWebGPUTerrainComparison(
 
         const previous = state.previousOnMapRemoved;
         const wrapper = (mapX: number, mapY: number) => {
+            const key = mapKey(mapX, mapY);
+            state.queuedPartialMaps.delete(key);
+            state.acceptedPartialMaps.delete(key);
             try {
                 previous?.(mapX, mapY);
             } finally {
@@ -168,6 +278,12 @@ export async function initWebGPUTerrainComparison(
                 renderer.uploadTerrain(mapData, loadTime);
             }
             state.pendingMaps.clear();
+        }
+        if (state.acceptedPartialMaps.size > 0) {
+            for (const partial of state.acceptedPartialMaps.values()) {
+                applyAcceptedPartialUpdate(host, state, partial);
+            }
+            state.acceptedPartialMaps.clear();
         }
 
         if (host.canvas.parentElement && canvas.parentNode !== host.canvas.parentElement) {
@@ -228,7 +344,7 @@ export function syncWebGPUTerrainMap(
             state.pendingTextures.set(textureId, pixels);
         }
         state.pendingMaps.set(
-            `${mapData.mapX | 0}:${mapData.mapY | 0}`,
+            mapKey(mapData.mapX, mapData.mapY),
             { mapData, loadTime },
         );
         return;
@@ -245,6 +361,8 @@ export function clearWebGPUTerrainComparisonMaps(host: WebGLOsrsRenderer): void 
     const state = states.get(host);
     if (!state || state.failed) return;
     state.pendingMaps.clear();
+    state.queuedPartialMaps.clear();
+    state.acceptedPartialMaps.clear();
     state.visibleMaps.length = 0;
     state.visibleMapLod.length = 0;
     if (!state.ready) return;
@@ -311,13 +429,11 @@ export function disposeWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
     const state = states.get(host);
     if (!state) return;
 
-    if (
-        state.mapRemovedWrapper &&
-        host.mapManager.onMapRemoved === state.mapRemovedWrapper
-    ) {
-        host.mapManager.onMapRemoved = state.previousOnMapRemoved;
-    }
-
+    restoreComparisonHooks(host, state);
+    state.pendingTextures.clear();
+    state.pendingMaps.clear();
+    state.queuedPartialMaps.clear();
+    state.acceptedPartialMaps.clear();
     state.visibleMaps.length = 0;
     state.visibleMapLod.length = 0;
     try { state.renderer.dispose(); } catch {}
