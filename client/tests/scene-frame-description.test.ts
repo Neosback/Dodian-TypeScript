@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 
 import {
     createSceneFrameDescription,
-    updateSceneFrameDescription,
+    updateSceneFrameCamera,
+    updateSceneFrameSettings,
+    updateSceneFrameTiming,
+    updateSceneFrameViewport,
 } from "../render/frame/SceneFrameDescription";
 
 const frame = createSceneFrameDescription();
@@ -10,38 +13,32 @@ const viewProjection = new Float32Array(16).fill(1);
 const view = new Float32Array(16).fill(2);
 const projection = new Float32Array(16).fill(3);
 
-updateSceneFrameDescription(frame, {
-    frameNumber: 12,
-    clientCycle: 34,
-    clientTickPhase: 0.5,
-    timeSeconds: 6.25,
-    deltaTimeMs: 16.67,
-    canvasWidth: 1920,
-    canvasHeight: 1080,
-    sceneWidth: 1280,
-    sceneHeight: 720,
-    sceneViewport: { x: 10, y: 20, width: 1000, height: 600 },
-    sceneFramebufferViewport: { x: 5, y: 10, width: 500, height: 300 },
-    viewProjectionMatrix: viewProjection,
-    viewMatrix: view,
-    projectionMatrix: projection,
-    skyColor: new Float32Array([0.1, 0.2, 0.3, 1]),
-    sceneHslOverride: new Float32Array([-1, -1, -1, 0]),
-    cameraX: 3200,
-    cameraZ: 3201,
-    playerX: 3210,
-    playerZ: 3211,
-    renderDistance: 48,
-    fogEnd: 48,
-    fogDepth: 36,
-    brightness: 0.8,
-    colorBanding: 255,
-    newTextureAnimation: 1,
-    maxLevel: 3,
-    roofPlaneLimit: 2,
-    cullBackFace: true,
-    scenePreview: false,
-});
+updateSceneFrameTiming(frame, 12, 34, 0.5, 6.25, 16.67);
+updateSceneFrameViewport(
+    frame,
+    1920,
+    1080,
+    1280,
+    720,
+    { x: 10, y: 20, width: 1000, height: 600 },
+    { x: 5, y: 10, width: 500, height: 300 },
+);
+updateSceneFrameCamera(frame, viewProjection, view, projection, 3200, 3201, 3210, 3211);
+updateSceneFrameSettings(
+    frame,
+    new Float32Array([0.1, 0.2, 0.3, 1]),
+    new Float32Array([-1, -1, -1, 0]),
+    48,
+    48,
+    36,
+    0.8,
+    255,
+    1,
+    3,
+    2,
+    true,
+    false,
+);
 
 assert.equal(frame.frameNumber, 12);
 assert.equal(frame.clientCycle, 34);

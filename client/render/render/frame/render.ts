@@ -188,7 +188,12 @@ import {
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
 import { uploadWebGL2SceneFrame } from "../../backend/WebGL2SceneUniforms";
-import { updateSceneFrameDescription } from "../../frame/SceneFrameDescription";
+import {
+    updateSceneFrameCamera,
+    updateSceneFrameSettings,
+    updateSceneFrameTiming,
+    updateSceneFrameViewport,
+} from "../../frame/SceneFrameDescription";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
 import { RENDER_CONSTANTS } from "../constants";
 
@@ -678,38 +683,48 @@ export function render(host: WebGLOsrsRendererHost, time: number, deltaTime: num
         profiler.startPhase("sceneUbo");
         host.cameraPosUni[0] = camera.getPosX();
         host.cameraPosUni[1] = camera.getPosZ();
-        updateSceneFrameDescription(host.sceneFrameDescription, {
-            frameNumber: frameCount,
+        updateSceneFrameTiming(
+            host.sceneFrameDescription,
+            frameCount,
             clientCycle,
-            clientTickPhase: host.clientTickPhase,
-            timeSeconds: timeSec,
-            deltaTimeMs: deltaTime,
-            canvasWidth: host.app.width,
-            canvasHeight: host.app.height,
-            sceneWidth: host.sceneRenderWidth,
-            sceneHeight: host.sceneRenderHeight,
+            host.clientTickPhase,
+            timeSec,
+            deltaTime,
+        );
+        updateSceneFrameViewport(
+            host.sceneFrameDescription,
+            host.app.width,
+            host.app.height,
+            host.sceneRenderWidth,
+            host.sceneRenderHeight,
             sceneViewport,
             sceneFramebufferViewport,
-            viewProjectionMatrix: camera.viewProjMatrix as Float32Array,
-            viewMatrix: camera.viewMatrix as Float32Array,
-            projectionMatrix: camera.projectionMatrix as Float32Array,
-            skyColor: host.skyColor as Float32Array,
-            sceneHslOverride: host.sceneHslOverride as Float32Array,
-            cameraX: host.cameraPosUni[0],
-            cameraZ: host.cameraPosUni[1],
-            playerX: host.playerPosUni[0],
-            playerZ: host.playerPosUni[1],
+        );
+        updateSceneFrameCamera(
+            host.sceneFrameDescription,
+            camera.viewProjMatrix as Float32Array,
+            camera.viewMatrix as Float32Array,
+            camera.projectionMatrix as Float32Array,
+            host.cameraPosUni[0],
+            host.cameraPosUni[1],
+            host.playerPosUni[0],
+            host.playerPosUni[1],
+        );
+        updateSceneFrameSettings(
+            host.sceneFrameDescription,
+            host.skyColor as Float32Array,
+            host.sceneHslOverride as Float32Array,
             renderDistance,
             fogEnd,
             fogDepth,
-            brightness: host.brightness,
-            colorBanding: host.colorBanding,
-            newTextureAnimation: Number(host.osrsClient.isNewTextureAnim),
-            maxLevel: host.maxLevel,
-            roofPlaneLimit: host.roofPlaneLimit,
-            cullBackFace: host.cullBackFace,
+            host.brightness,
+            host.colorBanding,
+            Number(host.osrsClient.isNewTextureAnim),
+            host.maxLevel,
+            host.roofPlaneLimit,
+            host.cullBackFace,
             scenePreview,
-        });
+        );
         uploadWebGL2SceneFrame(host.sceneUniformBuffer, host.sceneFrameDescription);
         profiler.endPhase();
 

@@ -40,43 +40,6 @@ export interface SceneFrameDescription {
     scenePreview: boolean;
 }
 
-export interface SceneFrameDescriptionSource {
-    frameNumber: number;
-    clientCycle: number;
-    clientTickPhase: number;
-    timeSeconds: number;
-    deltaTimeMs: number;
-
-    canvasWidth: number;
-    canvasHeight: number;
-    sceneWidth: number;
-    sceneHeight: number;
-    sceneViewport: RenderViewportRect;
-    sceneFramebufferViewport: RenderViewportRect;
-
-    viewProjectionMatrix: ArrayLike<number>;
-    viewMatrix: ArrayLike<number>;
-    projectionMatrix: ArrayLike<number>;
-    skyColor: ArrayLike<number>;
-    sceneHslOverride: ArrayLike<number>;
-    cameraX: number;
-    cameraZ: number;
-    playerX: number;
-    playerZ: number;
-
-    renderDistance: number;
-    fogEnd: number;
-    fogDepth: number;
-    brightness: number;
-    colorBanding: number;
-    newTextureAnimation: number;
-
-    maxLevel: number;
-    roofPlaneLimit?: number;
-    cullBackFace: boolean;
-    scenePreview: boolean;
-}
-
 function emptyViewport(): RenderViewportRect {
     return { x: 0, y: 0, width: 1, height: 1 };
 }
@@ -131,45 +94,82 @@ function copyViewport(target: RenderViewportRect, source: RenderViewportRect): v
     target.height = source.height;
 }
 
-export function updateSceneFrameDescription(
+export function updateSceneFrameTiming(
     target: SceneFrameDescription,
-    source: SceneFrameDescriptionSource,
-): SceneFrameDescription {
-    target.frameNumber = source.frameNumber | 0;
-    target.clientCycle = source.clientCycle | 0;
-    target.clientTickPhase = source.clientTickPhase;
-    target.timeSeconds = source.timeSeconds;
-    target.deltaTimeMs = source.deltaTimeMs;
+    frameNumber: number,
+    clientCycle: number,
+    clientTickPhase: number,
+    timeSeconds: number,
+    deltaTimeMs: number,
+): void {
+    target.frameNumber = frameNumber | 0;
+    target.clientCycle = clientCycle | 0;
+    target.clientTickPhase = clientTickPhase;
+    target.timeSeconds = timeSeconds;
+    target.deltaTimeMs = deltaTimeMs;
+}
 
-    target.canvasWidth = source.canvasWidth | 0;
-    target.canvasHeight = source.canvasHeight | 0;
-    target.sceneWidth = source.sceneWidth | 0;
-    target.sceneHeight = source.sceneHeight | 0;
-    copyViewport(target.sceneViewport, source.sceneViewport);
-    copyViewport(target.sceneFramebufferViewport, source.sceneFramebufferViewport);
+export function updateSceneFrameViewport(
+    target: SceneFrameDescription,
+    canvasWidth: number,
+    canvasHeight: number,
+    sceneWidth: number,
+    sceneHeight: number,
+    sceneViewport: RenderViewportRect,
+    sceneFramebufferViewport: RenderViewportRect,
+): void {
+    target.canvasWidth = canvasWidth | 0;
+    target.canvasHeight = canvasHeight | 0;
+    target.sceneWidth = sceneWidth | 0;
+    target.sceneHeight = sceneHeight | 0;
+    copyViewport(target.sceneViewport, sceneViewport);
+    copyViewport(target.sceneFramebufferViewport, sceneFramebufferViewport);
+}
 
-    target.viewProjectionMatrix.set(source.viewProjectionMatrix);
-    target.viewMatrix.set(source.viewMatrix);
-    target.projectionMatrix.set(source.projectionMatrix);
-    target.skyColor.set(source.skyColor);
-    target.sceneHslOverride.set(source.sceneHslOverride);
-    target.cameraPosition[0] = source.cameraX;
-    target.cameraPosition[1] = source.cameraZ;
-    target.playerPosition[0] = source.playerX;
-    target.playerPosition[1] = source.playerZ;
+export function updateSceneFrameCamera(
+    target: SceneFrameDescription,
+    viewProjectionMatrix: ArrayLike<number>,
+    viewMatrix: ArrayLike<number>,
+    projectionMatrix: ArrayLike<number>,
+    cameraX: number,
+    cameraZ: number,
+    playerX: number,
+    playerZ: number,
+): void {
+    target.viewProjectionMatrix.set(viewProjectionMatrix);
+    target.viewMatrix.set(viewMatrix);
+    target.projectionMatrix.set(projectionMatrix);
+    target.cameraPosition[0] = cameraX;
+    target.cameraPosition[1] = cameraZ;
+    target.playerPosition[0] = playerX;
+    target.playerPosition[1] = playerZ;
+}
 
-    target.renderDistance = source.renderDistance;
-    target.fogEnd = source.fogEnd;
-    target.fogDepth = source.fogDepth;
-    target.brightness = source.brightness;
-    target.colorBanding = source.colorBanding;
-    target.newTextureAnimation = source.newTextureAnimation;
-
-    target.maxLevel = source.maxLevel | 0;
-    target.roofPlaneLimit =
-        source.roofPlaneLimit === undefined ? target.maxLevel : source.roofPlaneLimit | 0;
-    target.cullBackFace = source.cullBackFace;
-    target.scenePreview = source.scenePreview;
-
-    return target;
+export function updateSceneFrameSettings(
+    target: SceneFrameDescription,
+    skyColor: ArrayLike<number>,
+    sceneHslOverride: ArrayLike<number>,
+    renderDistance: number,
+    fogEnd: number,
+    fogDepth: number,
+    brightness: number,
+    colorBanding: number,
+    newTextureAnimation: number,
+    maxLevel: number,
+    roofPlaneLimit: number | undefined,
+    cullBackFace: boolean,
+    scenePreview: boolean,
+): void {
+    target.skyColor.set(skyColor);
+    target.sceneHslOverride.set(sceneHslOverride);
+    target.renderDistance = renderDistance;
+    target.fogEnd = fogEnd;
+    target.fogDepth = fogDepth;
+    target.brightness = brightness;
+    target.colorBanding = colorBanding;
+    target.newTextureAnimation = newTextureAnimation;
+    target.maxLevel = maxLevel | 0;
+    target.roofPlaneLimit = roofPlaneLimit === undefined ? target.maxLevel : roofPlaneLimit | 0;
+    target.cullBackFace = cullBackFace;
+    target.scenePreview = scenePreview;
 }
