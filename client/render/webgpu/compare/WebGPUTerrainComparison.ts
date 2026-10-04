@@ -22,8 +22,8 @@ interface TerrainComparisonState {
     failed: boolean;
     pendingTextures: Map<number, Int32Array>;
     pendingMaps: Map<string, { mapData: SdMapData; loadTime: number }>;
-    queuedPartialMaps: Map<string, SdMapData>;
-    acceptedPartialMaps: Map<string, SdMapData>;
+    queuedPartialMaps: Map<string, SdMapData[]>;
+    acceptedPartialMaps: Map<string, SdMapData[]>;
     visibleMaps: VisibleComparisonMap[];
     visibleMapLod: number[];
 }
@@ -32,6 +32,32 @@ const states = new WeakMap<object, TerrainComparisonState>();
 
 function mapKey(mapX: number, mapY: number): string {
     return `${mapX | 0}:${mapY | 0}`;
+}
+
+function appendPartialMap(
+    target: Map<string, SdMapData[]>,
+    key: string,
+    mapData: SdMapData,
+): void {
+    const queue = target.get(key);
+    if (queue) {
+        queue.push(mapData);
+    } else {
+        target.set(key, [mapData]);
+    }
+}
+
+function takePartialMap(
+    target: Map<string, SdMapData[]>,
+    key: string,
+): SdMapData | undefined {
+    const queue = target.get(key);
+    if (!queue || queue.length === 0) return undefined;
+    const mapData = queue.shift();
+    if (queue.length === 0) {
+        target.delete(key);
+    }
+    return mapData;
 }
 
 export function isWebGPUTerrainComparisonRequested(search: string): boolean {
@@ -124,9 +150,9 @@ function installPartialMapObservers(
     const pushWrapper = function (this: unknown, mapData: SdMapData): number {
         const key = mapKey(mapData.mapX, mapData.mapY);
         if (mapData.locOnly || mapData.doorOnly) {
-            state.queuedPartialMaps.set(key, mapData);
+            appendPartialMap(state.queuedPartialMaps, key, mapData);
         } else {
-            // A full map payload supersedes any partial payload that did not commit.
+            // A full map payload supersedes partial payloads that did not commit yet.
             state.queuedPartialMaps.delete(key);
             state.acceptedPartialMaps.delete(key);
         }
@@ -138,14 +164,13 @@ function installPartialMapObservers(
         const mapX = args[0] | 0;
         const mapY = args[1] | 0;
         const key = mapKey(mapX, mapY);
-        const partial = state.queuedPartialMaps.get(key);
+        const partial = takePartialMap(state.queuedPartialMaps, key);
         if (!partial) {
             return result;
         }
 
-        state.queuedPartialMaps.delete(key);
         if (!state.ready) {
-            state.acceptedPartialMaps.set(key, partial);
+            appendPartialMap(state.acceptedPartialMaps, key, partial);
             return result;
         }
 
@@ -280,8 +305,10 @@ export async function initWebGPUTerrainComparison(
             state.pendingMaps.clear();
         }
         if (state.acceptedPartialMaps.size > 0) {
-            for (const partial of state.acceptedPartialMaps.values()) {
-                applyAcceptedPartialUpdate(host, state, partial);
+            for (const partialQueue of state.acceptedPartialMaps.values()) {
+                for (const partial of partialQueue) {
+                    applyAcceptedPartialUpdate(host, state, partial);
+                }
             }
             state.acceptedPartialMaps.clear();
         }
