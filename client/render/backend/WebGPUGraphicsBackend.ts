@@ -17,6 +17,7 @@ export interface WebGPUBackendOptions {
     alphaMode?: WebGPUCanvasAlphaMode;
     onDeviceLost?: (info: { reason: string; message: string }) => void;
     onUncapturedError?: (message: string) => void;
+    shaderSourceTransform?: (code: string, label?: string) => string;
 }
 
 export interface WebGPUBackendResources {
@@ -182,7 +183,8 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
             throw new Error("WebGPU device is not initialized");
         }
 
-        const module = device.createShaderModule({ code, label });
+        const transformedCode = this.options.shaderSourceTransform?.(code, label) ?? code;
+        const module = device.createShaderModule({ code: transformedCode, label });
         const info = await module.getCompilationInfo?.();
         if (!info) {
             return module;
