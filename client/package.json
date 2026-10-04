@@ -32,9 +32,9 @@
     "threads": "^1.7.0",
     "typescript": "6.0.3",
     "usehooks-ts": "^3.1.1",
-    "wasm-gzip": "^0.1.0",
+    "wasm-gzip": "^2.1.0",
     "web-vitals": "^5.3.0",
-    "webfontloader": "^1.6.38",
+    "webfontloader": "^1.6.28",
     "xxhash-wasm": "^1.1.0"
   },
   "scripts": {
