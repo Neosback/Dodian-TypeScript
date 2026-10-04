@@ -59,7 +59,7 @@ Status: bootstrap infrastructure implemented on this branch.
 
 ### 3. Static scene
 
-Status: terrain foundation in progress.
+Status: terrain and static-scenery foundation in progress.
 
 #### 3A. Terrain geometry/render-pass foundation
 
@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, and map-level LOD parity implemented; mutable updates/doors/animation still pending.
+Status: opaque, alpha, LOD, mutable loc replacement, and doors implemented; animation/world-entity parity still pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -125,7 +125,14 @@ Status: opaque, alpha, and map-level LOD parity implemented; mutable updates/doo
 - Render transparent locs immediately after transparent terrain for the same map while traversing visible maps in reverse order.
 - Use the shared `fsMainAlpha` cutoff path plus `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`, `less-equal` depth testing, and depth writes enabled for transparent loc parity.
 - Cache cull/no-cull variants for opaque and alpha loc pipelines rather than rebuilding pipeline state in the frame loop.
-- Remaining static-scene work includes mutable `locOnly` replacement, doors, world-entity transforms, and animated scenery updates.
+- Keep door vertex/index/model-info resources independent from ordinary loc resources so a `doorOnly` payload can replace doors without touching terrain or locs.
+- Map the worker's eight door model-info/range variants into the same static-loc GPU format; the current comparison uses the ordinary opaque/alpha and LOD variants while preserving the interaction variants for later picking/highlight work.
+- Render doors after ordinary locs for each map in both opaque and transparent passes, preserving their relative WebGL scene order (ground items remain a later port).
+- Mirror valid `locOnly` and `doorOnly` updates only after WebGL commits the corresponding `MapManager.addMap`, rather than when a worker payload merely enters the queue.
+- Preserve FIFO ordering for multiple partial updates targeting the same map and discard queued partials when a full payload supersedes them.
+- Restore all queue/map observers during comparison disposal, device-loss fallback, or validation failure so the opt-in A/B path cannot leave hooks installed.
+- Loc and door resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
+- Remaining static-scene work includes world-entity transforms, animated scenery updates, ground-item parity, and the dedicated wall/decor depth/order rules.
 
 ### 4. Ordering, depth, culling, and picking
 
