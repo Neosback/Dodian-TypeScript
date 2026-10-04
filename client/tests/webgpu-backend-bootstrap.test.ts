@@ -49,15 +49,19 @@ async function main(): Promise<void> {
         },
     };
 
-    const device: WebGPUDeviceLike = {
+    const device = {
         lost,
+        queue: {
+            writeBuffer() {},
+            submit() {},
+        },
         createShaderModule() {
             return shaderModule;
         },
         destroy() {
             destroyed = true;
         },
-    };
+    } as WebGPUDeviceLike;
 
     const adapter: WebGPUAdapterLike = {
         async requestDevice() {

@@ -99,11 +99,20 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
         const adapter = await api.requestAdapter({
             powerPreference: options.powerPreference ?? "high-performance",
         });
+        if (generation !== this.deviceGeneration || this.disposed) {
+            throw new Error("WebGPU initialization was cancelled");
+        }
         if (!adapter) {
             throw new Error("WebGPU did not provide a compatible GPU adapter");
         }
 
         const device = await adapter.requestDevice();
+        if (generation !== this.deviceGeneration || this.disposed) {
+            try {
+                device.destroy?.();
+            } catch {}
+            throw new Error("WebGPU initialization was cancelled");
+        }
         const format = api.getPreferredCanvasFormat();
 
         this.uncapturedErrorListener = (event) => {

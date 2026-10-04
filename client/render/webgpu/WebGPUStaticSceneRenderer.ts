@@ -1,7 +1,6 @@
 import type { SceneFrameDescription } from "../frame/SceneFrameDescription";
 import { WebGPUGraphicsBackend } from "../backend/WebGPUGraphicsBackend";
 import {
-    WEBGPU_BUFFER_USAGE,
     WEBGPU_SHADER_STAGE,
     WEBGPU_TEXTURE_USAGE,
     type WebGPUBindGroupLayoutLike,
