@@ -122,6 +122,8 @@ export class WebGPUTerrainMapResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
     readonly waterMask: WebGPUWaterMaskResources;
+    readonly sharedMapUniformBuffer: WebGPUBufferLike;
+    readonly sharedMapBindGroup: WebGPUBindGroupLike;
     readonly draws: WebGPUTerrainDrawResources[];
     readonly alphaDraws: WebGPUTerrainDrawResources[];
 
@@ -154,6 +156,30 @@ export class WebGPUTerrainMapResources {
             dimension: "2d-array",
             baseArrayLayer: 0,
             arrayLayerCount: 4,
+        });
+        const sharedMapUniformData = new Float32Array([
+            this.plan.renderPosX,
+            this.plan.renderPosY,
+            0,
+            loadTime,
+            data.borderSize,
+            0,
+            0,
+            0,
+        ]);
+        this.sharedMapUniformBuffer = createUploadedBuffer(
+            device,
+            `terrain-${this.plan.mapX}-${this.plan.mapY}-shared-map-uniforms`,
+            WEBGPU_BUFFER_USAGE.UNIFORM,
+            sharedMapUniformData,
+        );
+        this.sharedMapBindGroup = device.createBindGroup({
+            label: `terrain-${this.plan.mapX}-${this.plan.mapY}-shared-map-bind-group`,
+            layout: mapBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: this.sharedMapUniformBuffer } },
+                { binding: 1, resource: waterMaskView },
+            ],
         });
 
         const createDrawResources = (
@@ -201,6 +227,7 @@ export class WebGPUTerrainMapResources {
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
         this.waterMask.dispose();
+        this.sharedMapUniformBuffer.destroy?.();
         for (const draw of this.draws) {
             draw.mapUniformBuffer.destroy?.();
         }

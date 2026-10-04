@@ -109,7 +109,17 @@ Status: water shader/resources and opt-in A/B activation implemented.
 - Preserve WebGL's current transparent-terrain depth behavior: depth test `less-equal` with depth writes still enabled.
 - Cache cull/no-cull variants for both opaque and alpha terrain pipelines and select from `SceneFrameDescription.cullBackFace` without rebuilding pipelines in the frame loop.
 
-After terrain parity, continue with static scenery/locs.
+#### 3C. Static scenery/locs
+
+Status: opaque foundation implemented; alpha/LOD/doors/animation still pending.
+
+- Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
+- Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
+- Upload the existing four-plane signed height map as `r16sint`, with WebGPU row padding, and port the same two-diagonal contour interpolation used by GLSL.
+- Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
+- Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, and height contouring.
+- Reuse the terrain map/water bind group and the shared texture/material/water resources so loc fragment shading stays on the same material path.
+- Keep this slice intentionally limited to normal opaque static locs. Alpha locs, LOD selection, mutable loc-only updates, doors, world-entity transforms, and animated scenery remain separate checkpoints.
 
 ### 4. Ordering, depth, culling, and picking
 

@@ -82,8 +82,20 @@ struct WaterMaskSample {
 @group(3) @binding(0) var waterSampler: sampler;
 @group(3) @binding(1) var waterTextures: texture_2d_array<f32>;
 
+struct LocModelInfoBuffer {
+    data: array<vec4<u32>>,
+};
+
+@group(4) @binding(0) var locHeightMap: texture_2d_array<i32>;
+@group(4) @binding(1) var<storage, read> locModelInfos: LocModelInfoBuffer;
+
 struct VertexInput {
     @location(0) packed: vec3<u32>,
+};
+
+struct LocVertexInput {
+    @location(0) packed: vec3<u32>,
+    @builtin(instance_index) instanceIndex: u32,
 };
 
 struct VertexOutput {
@@ -476,6 +488,45 @@ fn shadeWater(
     return clamp(mix(underwater, baseColor, alpha), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn getLocTileHeight(x: i32, z: i32, plane: u32) -> i32 {
+    return textureLoad(
+        locHeightMap,
+        vec2<i32>(i32(map.borderSize) + x, i32(map.borderSize) + z),
+        i32(plane),
+        0,
+    ).r * 8;
+}
+
+fn getLocHeightInterp(pos: vec2<f32>, plane: u32) -> f32 {
+    let ipos = vec2<i32>(pos);
+    let tileX = ipos.x >> 7u;
+    let tileZ = ipos.y >> 7u;
+    let offsetX = ipos.x & 127;
+    let offsetZ = ipos.y & 127;
+    let hSW = getLocTileHeight(tileX, tileZ, plane);
+    let hSE = getLocTileHeight(tileX + 1, tileZ, plane);
+    let hNW = getLocTileHeight(tileX, tileZ + 1, plane);
+    let hNE = getLocTileHeight(tileX + 1, tileZ + 1, plane);
+
+    var h0: i32;
+    if (offsetX + offsetZ <= 128) {
+        h0 = (hSW * 128 + (hSE - hSW) * offsetX + (hNW - hSW) * offsetZ) >> 7u;
+    } else {
+        let rx = 128 - offsetX;
+        let rz = 128 - offsetZ;
+        h0 = (hNE * 128 + (hNW - hNE) * rx + (hSE - hNE) * rz) >> 7u;
+    }
+
+    var h1: i32;
+    if (offsetX <= offsetZ) {
+        h1 = (hSW * 128 + (hNW - hSW) * offsetZ + (hNE - hNW) * offsetX) >> 7u;
+    } else {
+        h1 = (hSW * 128 + (hSE - hSW) * offsetX + (hNE - hSE) * offsetZ) >> 7u;
+    }
+
+    return f32(max(h0, h1));
+}
+
 @vertex
 fn vsMain(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
@@ -503,6 +554,92 @@ fn vsMain(input: VertexInput) -> VertexOutput {
     let loadAlpha = smoothstep(0.0, 1.0, min(scene.currentTime - map.loadTime, 1.0));
     let baseFog = fogFactor(worldPos.xz - scene.playerPos);
     output.fogAmount = select(max(1.0 - loadAlpha, baseFog), baseFog, loadAlpha >= 1.0);
+    return output;
+}
+
+@vertex
+fn vsLocMain(input: LocVertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    let rawHsl = i32((input.packed.y >> 15u) & 0xffffu);
+    let textureId = decodeTextureId(rawHsl, input.packed.y, input.packed.z);
+    let material = getMaterial(textureId);
+    let info = locModelInfos.data[input.instanceIndex];
+
+    let tilePos = vec2<f32>(
+        f32(info.x & 0x3fffu),
+        f32(info.y & 0x3fffu),
+    );
+    let height = f32((info.z >> 8u) * 8u);
+    let plane = (info.x >> 14u) & 0x3u;
+    let planeCullLevel = (info.z >> 6u) & 0x3u;
+    let modelPriority = info.z & 0x7u;
+    let contourGround = (info.y >> 14u) & 0x3u;
+
+    output.color = decodeVertexColor(rawHsl, textureId, input.packed.z);
+    output.texCoord = animateTexCoord(
+        decodeTexCoord(input.packed.x, input.packed.z),
+        material,
+    );
+    output.textureId = textureId;
+    output.alphaCutOff = material.alphaCutOff;
+    output.plane = f32(plane);
+
+    if (f32(planeCullLevel) > scene.roofPlaneLimit + 0.5) {
+        output.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        output.color = vec4<f32>(0.0);
+        output.fogAmount = 1.0;
+        output.texCoord = vec2<f32>(0.0);
+        output.textureId = 0u;
+        output.alphaCutOff = 1.0;
+        output.worldUv = vec2<f32>(0.0);
+        output.worldPos = vec3<f32>(0.0);
+        return output;
+    }
+
+    var localPos = decodeVertexPosition(
+        input.packed.x,
+        input.packed.y,
+        input.packed.z,
+    );
+    localPos += vec3<f32>(tilePos.x, 0.0, tilePos.y);
+
+    var interpPos = vec2<f32>(0.0);
+    if (contourGround == 0u) {
+        interpPos = tilePos;
+    } else if (contourGround == 1u) {
+        interpPos = localPos.xz;
+    }
+
+    localPos.y -= height;
+    if (contourGround < 2u) {
+        localPos.y -= getLocHeightInterp(interpPos, plane);
+    }
+
+    let worldPos =
+        localPos / 128.0 +
+        vec3<f32>(map.mapPos.x * 64.0, 0.0, map.mapPos.y * 64.0);
+    output.worldUv = worldPos.xz;
+    output.worldPos = worldPos;
+
+    let loadAlpha = smoothstep(0.0, 1.0, min(scene.currentTime - map.loadTime, 1.0));
+    let baseFog = fogFactor(worldPos.xz - scene.playerPos);
+    output.fogAmount = select(
+        max(1.0 - loadAlpha, baseFog),
+        baseFog,
+        loadAlpha >= 1.0,
+    );
+
+    var viewPos = scene.viewMatrix * vec4<f32>(worldPos, 1.0);
+    viewPos.z += f32(plane) * 0.001;
+    if (modelPriority > 0u) {
+        viewPos.z += f32(modelPriority) * 0.001;
+    }
+    let facePriority = (input.packed.z >> 6u) & 0x7u;
+    if (facePriority > 0u) {
+        viewPos.z += f32(facePriority) * 0.001;
+    }
+
+    output.position = scene.projectionMatrix * viewPos;
     return output;
 }
 
