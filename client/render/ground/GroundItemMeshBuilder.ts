@@ -16,6 +16,7 @@ import {
     createModelInfoTextureData,
     getModelFacesFiltered,
 } from "../buffer/SceneBuffer";
+import { recordGroundItemGeometrySnapshot } from "./GroundItemGeometrySnapshot";
 
 export type GroundItemGeometryBuildData = {
     vertices: Uint8Array;
@@ -97,14 +98,21 @@ export function buildGroundItemGeometry(
     textureLoader: TextureLoader,
     textureIdIndexMap: Map<number, number>,
 ): GroundItemGeometryBuildData | undefined {
+    const finish = (
+        data: GroundItemGeometryBuildData | undefined,
+    ): GroundItemGeometryBuildData | undefined => {
+        recordGroundItemGeometrySnapshot(map, data);
+        return data;
+    };
+
     if (!stacks || stacks.length === 0) {
-        return undefined;
+        return finish(undefined);
     }
     const filtered = stacks
         .map(cloneStack)
         .filter((stack) => stack.tile && typeof stack.tile.level === "number");
     if (!filtered.length) {
-        return undefined;
+        return finish(undefined);
     }
 
     const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, filtered.length * 64);
@@ -177,7 +185,7 @@ export function buildGroundItemGeometry(
     }
 
     if (sceneBuf.vertexCount() === 0) {
-        return undefined;
+        return finish(undefined);
     }
 
     const { ranges: drawRanges, planes: drawRangesPlanes } = buildDrawRanges(sceneBuf.drawCommands);
@@ -201,7 +209,7 @@ export function buildGroundItemGeometry(
     const { ranges: drawRangesInteractLodAlpha, planes: drawRangesInteractLodAlphaPlanes } =
         buildDrawRanges(sceneBuf.drawCommandsInteractLodAlpha);
 
-    return {
+    return finish({
         vertices: sceneBuf.vertexBuf.byteArray(),
         indices: new Int32Array(sceneBuf.indices),
         drawRanges,
@@ -235,5 +243,5 @@ export function buildGroundItemGeometry(
             sceneBuf.drawCommandsInteractLodAlpha,
         ),
         usedTextureIds: new Set(sceneBuf.usedTextureIds),
-    };
+    });
 }
