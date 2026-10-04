@@ -187,6 +187,7 @@ import {
     createProjectileProgram,
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
+import { WebGL2GraphicsBackend } from "../../backend/WebGL2GraphicsBackend";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
 import { RENDER_CONSTANTS, optimizeAssumingFlatsHaveSameFirstAndLastData } from "../constants";
 import { initRenderer } from "../handlers";
@@ -207,11 +208,18 @@ export async function init(host: WebGLOsrsRendererHost, ): Promise<void> {
             window.visualViewport?.addEventListener("scroll", host.onMobileLoginViewportChange);
         }
 
-        host.app = PicoGL.createApp(host.canvas);
-        // Ensure app dimensions are initialized from canvas
-        (host.app as any).width = host.canvas.width;
-        (host.app as any).height = host.canvas.height;
-        host.gl = host.app.gl as WebGL2RenderingContext;
+        host.graphicsBackend?.dispose();
+        const graphicsBackend = new WebGL2GraphicsBackend();
+        const graphics = graphicsBackend.init(host.canvas, { clearColor: host.skyColor });
+        host.graphicsBackend = graphicsBackend;
+
+        // Preserve the existing renderer surface while backend ownership moves
+        // behind the graphics API abstraction.
+        host.app = graphics.app;
+        host.gl = graphics.gl;
+        host.timer = graphics.timer;
+        host.hasMultiDraw = graphics.hasMultiDraw;
+        host.drawBackend = graphics.drawBackend;
 
         // Initialize widget manager with the active UI layout space.
         if (host.osrsClient.widgetManager) {
@@ -224,44 +232,7 @@ export async function init(host: WebGLOsrsRendererHost, ): Promise<void> {
 
         host.hitsplatTickUnsub = subscribeTick((tick) => host.onServerTick(tick));
 
-        // https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#use_webgl_provoking_vertex_when_its_available
-        optimizeAssumingFlatsHaveSameFirstAndLastData(host.gl);
-
-        host.timer = host.app.createTimer();
-
-        // Prefer the multi-draw extension when available; fall back to explicit single draws otherwise.
-        // Safari's Metal ANGLE advertises WEBGL_multi_draw but then fails at draw time with
-        // attribute-type mismatches in glMultiDrawArraysInstancedANGLE.
-        const state: any = host.app.state;
-        const ext = isSafari ? null : host.gl.getExtension("WEBGL_multi_draw");
-        PicoGL.WEBGL_INFO.MULTI_DRAW_INSTANCED = ext;
-        state.extensions.multiDrawInstanced = ext;
-
-        host.hasMultiDraw = !!ext;
-        host.drawBackend?.dispose();
-        host.drawBackend = createDrawBackend(host.hasMultiDraw);
-        host.drawBackend.init(host.app, host.gl);
-
-        if (!ext) {
-            console.warn(
-                isSafari
-                    ? "Disabling WEBGL_multi_draw on Safari/WebKit; using single-draw fallback."
-                    : "WEBGL_multi_draw extension not available! Rendering may not work correctly. " +
-                      "Falling back to single-draw rendering; this is slower but supported.",
-            );
-        }
-
         host.osrsClient.workerPool.initLoader(host.dataLoader);
-
-        host.gl.getExtension("EXT_float_blend");
-
-        host.app.enable(PicoGL.CULL_FACE);
-        host.app.enable(PicoGL.DEPTH_TEST);
-        host.app.depthFunc(PicoGL.LEQUAL);
-
-        host.app.enable(PicoGL.BLEND);
-        host.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
-        host.app.clearColor(host.skyColor[0], host.skyColor[1], host.skyColor[2], host.skyColor[3]);
 
         host.quadPositions = host.app.createVertexBuffer(
             PicoGL.FLOAT,

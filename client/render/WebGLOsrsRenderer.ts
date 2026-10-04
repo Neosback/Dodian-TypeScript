@@ -186,6 +186,7 @@ import {
     createProjectileProgram,
 } from "./shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "./water/WaterTextureIds";
+import type { GraphicsBackend } from "./backend/GraphicsBackend";
 
 import * as render from "./render";
 import { RENDER_CONSTANTS, TextureFilterMode, HD_SKY_COLOR_VEC4, HD_AUTO_FOG_DEPTH_FACTOR } from "./render/constants";
@@ -326,6 +327,9 @@ export class WebGLOsrsRenderer extends GameRenderer<WebGLMapSquare> {
     public static readonly MOBILE_GAMEPLAY_UI_MAX_SCALE = 1.5;
     public static readonly MOBILE_GAMEPLAY_UI_PHONE_EDGE = 390;
     public static readonly MOBILE_GAMEPLAY_UI_TABLET_EDGE = 768;
+    /** Active low-level graphics backend. WebGL2 today, WebGPU in later checkpoints. */
+    public graphicsBackend?: GraphicsBackend;
+
     app!: PicoApp;
     gl!: WebGL2RenderingContext;
 

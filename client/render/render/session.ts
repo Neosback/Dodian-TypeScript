@@ -341,7 +341,8 @@ export async function cleanUp(host: WebGLOsrsRendererHost, ): Promise<void> {
         host.waterTextures?.delete();
         host.waterTextures = undefined;
 
-        host.drawBackend?.dispose();
+        host.graphicsBackend?.dispose();
+        host.graphicsBackend = undefined;
         host.drawBackend = undefined;
 
         for (const texture of host.actorDataTextures) {
