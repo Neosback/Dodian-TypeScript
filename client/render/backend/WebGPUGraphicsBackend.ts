@@ -81,6 +81,10 @@ export class WebGPUGraphicsBackend implements GraphicsBackend {
         return this.resources?.format;
     }
 
+    get canvasContext(): WebGPUCanvasContextLike | undefined {
+        return this.canvasResources?.context;
+    }
+
     async init(options: WebGPUBackendOptions = {}): Promise<WebGPUBackendResources> {
         this.dispose();
         this.disposed = false;

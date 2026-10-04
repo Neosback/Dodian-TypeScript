@@ -59,9 +59,27 @@ Status: bootstrap infrastructure implemented on this branch.
 
 ### 3. Static scene
 
+Status: terrain foundation in progress.
+
+#### 3A. Terrain geometry/render-pass foundation
+
+Status: implemented on this branch.
+
+- Reuse the worker-produced 12-byte packed terrain vertex format and uint32 index data without CPU repacking.
+- Add WGSL-compatible scene-uniform packing with explicit alignment and WebGL fog-distance parity.
+- Add a WebGPU terrain pipeline shell with depth24plus, back-face culling, viewport/scissor state, and per-plane roof culling.
+- Add per-map terrain GPU resources and draw-range conversion directly from `SdMapData`.
+- Add a first WGSL terrain shader that decodes packed position/HSL/alpha/priority, applies scene HSL override, fog, load fade, brightness, and color banding.
+- Keep textured terrain on a temporary light-only color path until the shared WebGPU texture/material array is implemented in 3B.
+- Do not activate the WebGPU renderer in the live client yet.
+
+#### 3B. Terrain textures/material parity and A/B activation
+
 Status: pending.
 
-Port terrain first, then static scenery, with WebGL2 A/B comparison.
+Upload the SD texture/material arrays, port texture animation and water/terrain material sampling, then wire an opt-in WebGPU terrain renderer for side-by-side WebGL2 parity checks before making WebGPU selectable as the live scene backend.
+
+After terrain parity, continue with static scenery/locs.
 
 ### 4. Ordering, depth, culling, and picking
 
