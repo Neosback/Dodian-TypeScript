@@ -22,6 +22,7 @@ export interface WebGPUStaticLocDrawPlanEntry {
 
 export interface WebGPUStaticLocPlan {
     draws: WebGPUStaticLocDrawPlanEntry[];
+    sourceIndices: number[];
     modelInfoWords: Uint32Array;
 }
 
@@ -40,9 +41,28 @@ export interface WebGPUStaticLocPassResources {
     readonly modelInfoBuffer: WebGPUBufferLike;
     readonly bindGroup: WebGPUBindGroupLike;
     readonly draws: WebGPUStaticLocDrawPlanEntry[];
+    readonly drawsBySourceIndex: Array<WebGPUStaticLocDrawPlanEntry | undefined>;
+}
+
+export interface WebGPUAnimatedLocState {
+    readonly frame: number;
+    readonly anim: {
+        readonly frames: readonly DrawRange[];
+        readonly framesAlpha?: readonly DrawRange[];
+    };
+    getDrawRangeIndex(
+        isAlpha: boolean,
+        isInteract: boolean,
+        isLod: boolean,
+    ): number;
 }
 
 const EMPTY_DRAWS: WebGPUStaticLocDrawPlanEntry[] = [];
+const LOC_RESOURCES_BY_DEVICE = new WeakMap<object, Map<number, WebGPUStaticLocResources>>();
+
+function mapId(mapX: number, mapY: number): number {
+    return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
+}
 
 function alignedBufferSize(byteLength: number): number {
     return Math.max(4, (byteLength + 3) & ~3);
@@ -71,6 +91,7 @@ export function createWebGPUStaticLocPlanFromData(
     drawRangesPlanes?: Uint8Array,
 ): WebGPUStaticLocPlan {
     const draws: WebGPUStaticLocDrawPlanEntry[] = [];
+    const sourceIndices: number[] = [];
     const drawCount = drawRanges.length;
     const headerWords = drawCount * 4;
 
@@ -85,16 +106,17 @@ export function createWebGPUStaticLocPlanFromData(
         const range = drawRanges[i];
         const byteOffset = range[0] | 0;
         const indexCount = range[1] | 0;
-        const instanceCount = Math.max(1, range[2] | 0);
-        if (indexCount <= 0) {
-            continue;
-        }
+        const instanceCount = Math.max(0, range[2] | 0);
         if ((byteOffset & 3) !== 0) {
             throw new Error(`Loc index byte offset must be 4-byte aligned: ${byteOffset}`);
         }
 
-        const firstInstance = (modelData[i * 4] | 0) - drawCount;
+        const encodedInstance = modelData[i * 4] | 0;
+        const firstInstance = encodedInstance - drawCount;
         if (firstInstance < 0) {
+            if (indexCount <= 0 || instanceCount <= 0) {
+                continue;
+            }
             throw new Error(
                 `Loc model-info draw ${i} has invalid first instance ${firstInstance}`,
             );
@@ -108,6 +130,7 @@ export function createWebGPUStaticLocPlanFromData(
             firstInstance,
             plane: drawRangesPlanes?.[i] ?? 0,
         });
+        sourceIndices.push(i);
     }
 
     const requiredWords = (drawCount + maxInstance) * 4;
@@ -122,7 +145,7 @@ export function createWebGPUStaticLocPlanFromData(
         modelInfoWords[i] = modelData[headerWords + i] ?? 0;
     }
 
-    return { draws, modelInfoWords };
+    return { draws, sourceIndices, modelInfoWords };
 }
 
 export function createWebGPUStaticLocPlan(
@@ -169,12 +192,82 @@ function createPassResources(
             { binding: 1, resource: { buffer: modelInfoBuffer } },
         ],
     });
+    const drawsBySourceIndex: Array<WebGPUStaticLocDrawPlanEntry | undefined> =
+        new Array(drawRanges.length);
+    for (let i = 0; i < plan.draws.length; i++) {
+        drawsBySourceIndex[plan.sourceIndices[i]] = plan.draws[i];
+    }
 
     return {
         modelInfoBuffer,
         bindGroup,
         draws: plan.draws,
+        drawsBySourceIndex,
     };
+}
+
+export function applyWebGPUAnimatedLocDrawRanges(
+    pass: WebGPUStaticLocPassResources | undefined,
+    locsAnimated: readonly WebGPUAnimatedLocState[],
+    transparent: boolean,
+    lod: boolean,
+): number {
+    if (!pass || locsAnimated.length === 0) {
+        return 0;
+    }
+
+    let updated = 0;
+    for (const loc of locsAnimated) {
+        const frames = transparent ? loc.anim.framesAlpha : loc.anim.frames;
+        if (!frames) {
+            continue;
+        }
+        const frame = frames[loc.frame | 0];
+        if (!frame) {
+            continue;
+        }
+
+        const sourceIndex = loc.getDrawRangeIndex(transparent, false, lod);
+        if (sourceIndex < 0 || sourceIndex >= pass.drawsBySourceIndex.length) {
+            continue;
+        }
+        const draw = pass.drawsBySourceIndex[sourceIndex];
+        if (!draw) {
+            continue;
+        }
+
+        const byteOffset = frame[0] | 0;
+        if ((byteOffset & 3) !== 0) {
+            throw new Error(
+                `Animated loc index byte offset must be 4-byte aligned: ${byteOffset}`,
+            );
+        }
+        draw.firstIndex = byteOffset >>> 2;
+        draw.indexCount = Math.max(0, frame[1] | 0);
+        draw.instanceCount = Math.max(0, frame[2] | 0);
+        updated++;
+    }
+    return updated;
+}
+
+export function syncWebGPUAnimatedLocsForMap(
+    device: WebGPUDeviceLike | undefined,
+    mapX: number,
+    mapY: number,
+    locsAnimated: readonly WebGPUAnimatedLocState[],
+    lod: boolean,
+): number {
+    if (!device || locsAnimated.length === 0) {
+        return 0;
+    }
+    const resources = LOC_RESOURCES_BY_DEVICE.get(device as object)?.get(mapId(mapX, mapY));
+    if (!resources) {
+        return 0;
+    }
+    return (
+        applyWebGPUAnimatedLocDrawRanges(resources.getPass(false, lod), locsAnimated, false, lod) +
+        applyWebGPUAnimatedLocDrawRanges(resources.getPass(true, lod), locsAnimated, true, lod)
+    );
 }
 
 export class WebGPUStaticLocResources {
@@ -186,6 +279,9 @@ export class WebGPUStaticLocResources {
     readonly lod?: WebGPUStaticLocPassResources;
     readonly lodAlpha?: WebGPUStaticLocPassResources;
 
+    private readonly registryDevice?: WebGPUDeviceLike;
+    private readonly registryMapId?: number;
+
     constructor(
         device: WebGPUDeviceLike,
         bindGroupLayout: WebGPUBindGroupLayoutLike,
@@ -194,6 +290,7 @@ export class WebGPUStaticLocResources {
         geometry: LocGeometryData,
         heightMapSize: number,
         heightMapTextureData: Int16Array,
+        registerForAnimation: boolean = true,
     ) {
         this.vertexBuffer = createUploadedBuffer(
             device,
@@ -267,6 +364,18 @@ export class WebGPUStaticLocResources {
             geometry.drawRangesLodAlpha,
             geometry.drawRangesLodAlphaPlanes,
         );
+
+        if (registerForAnimation) {
+            const id = mapId(mapX, mapY);
+            let registry = LOC_RESOURCES_BY_DEVICE.get(device as object);
+            if (!registry) {
+                registry = new Map();
+                LOC_RESOURCES_BY_DEVICE.set(device as object, registry);
+            }
+            registry.set(id, this);
+            this.registryDevice = device;
+            this.registryMapId = id;
+        }
     }
 
     /** Backward-compatible ordinary opaque access used by the first loc checkpoint. */
@@ -290,12 +399,19 @@ export class WebGPUStaticLocResources {
     }
 
     dispose(): void {
+        if (this.registryDevice && this.registryMapId !== undefined) {
+            const registry = LOC_RESOURCES_BY_DEVICE.get(this.registryDevice as object);
+            if (registry?.get(this.registryMapId) === this) {
+                registry.delete(this.registryMapId);
+            }
+        }
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
         for (const pass of [this.opaque, this.alpha, this.lod, this.lodAlpha]) {
             pass?.modelInfoBuffer.destroy?.();
             if (pass) {
                 pass.draws.length = 0;
+                pass.drawsBySourceIndex.length = 0;
             }
         }
         this.heightMap.dispose();
