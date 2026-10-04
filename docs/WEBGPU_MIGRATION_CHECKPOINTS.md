@@ -49,6 +49,7 @@ Status: bootstrap infrastructure implemented on this branch.
 
 - Parse `?renderer=webgpu` and `?renderer=webgl2` preferences, with `webgl` accepted as a legacy alias.
 - Resolve backend order with WebGPU preferred in auto mode and WebGL2 retained as fallback.
+- Execute device-level fallback when WebGPU adapter/device initialization fails, while deferring WebGL2 context creation to the concrete renderer.
 - Add async high-performance WebGPU adapter/device initialization.
 - Keep device creation separate from canvas context acquisition so fallback can replace the canvas instead of attempting two graphics context types on one element.
 - Configure the preferred WebGPU canvas format and explicit alpha mode.

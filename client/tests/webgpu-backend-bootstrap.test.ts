@@ -4,6 +4,7 @@ import {
     parseGraphicsBackendPreference,
     resolveGraphicsBackendOrder,
 } from "../render/backend/GraphicsBackendSelection";
+import { bootstrapGraphicsBackend } from "../render/backend/GraphicsBackendBootstrap";
 import { WebGPUGraphicsBackend } from "../render/backend/WebGPUGraphicsBackend";
 import type {
     WebGPUAdapterLike,
@@ -89,6 +90,33 @@ async function main(): Promise<void> {
     // Resolve after disposal to ensure intentional teardown does not behave as a
     // runtime device-loss notification.
     lostResolve({ reason: "destroyed", message: "test teardown" });
+
+    let failedBackend: string | undefined;
+    const fallback = await bootstrapGraphicsBackend({
+        preference: "auto",
+        capabilities: { webgpu: true, webgl2: true },
+        createWebGPUBackend: () =>
+            new WebGPUGraphicsBackend({
+                async requestAdapter() {
+                    throw new Error("adapter init failed");
+                },
+                getPreferredCanvasFormat() {
+                    return "bgra8unorm";
+                },
+            }),
+        onBackendFailure(kind) {
+            failedBackend = kind;
+        },
+    });
+    assert.equal(fallback.kind, "webgl2");
+    assert.equal(failedBackend, "webgpu");
+    assert.match(fallback.fallbackReason ?? "", /adapter init failed/);
+
+    const forcedLegacy = await bootstrapGraphicsBackend({
+        preference: "webgl2",
+        capabilities: { webgpu: true, webgl2: true },
+    });
+    assert.equal(forcedLegacy.kind, "webgl2");
 
     console.log("webgpu backend bootstrap checks passed");
 }
