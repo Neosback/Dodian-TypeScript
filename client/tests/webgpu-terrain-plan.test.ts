@@ -15,6 +15,9 @@ const plan = createWebGPUTerrainDrawPlan({
         [12, 3, 1],
     ],
     drawRangesPlanes: new Uint8Array([0, 1, 2]),
+    borderSize: 0,
+    heightMapSize: 1,
+    waterMaskTextureData: new Uint8Array(16),
 });
 
 assert.equal(plan.mapX, 50);
@@ -35,6 +38,9 @@ assert.throws(
             indices: new Int32Array([0]),
             drawRanges: [[2, 1, 1]],
             drawRangesPlanes: new Uint8Array([0]),
+            borderSize: 0,
+            heightMapSize: 1,
+            waterMaskTextureData: new Uint8Array(16),
         }),
     /4-byte aligned/,
 );

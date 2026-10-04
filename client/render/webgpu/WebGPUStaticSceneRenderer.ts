@@ -276,6 +276,10 @@ export class WebGPUStaticSceneRenderer {
         this.maps.delete(key);
     }
 
+    clearTerrain(): void {
+        this.clearTerrain();
+    }
+
     render(frame: SceneFrameDescription): void {
         const device = this.device;
         const context = this.backend.canvasContext;

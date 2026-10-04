@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
+import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
 
 export interface CanvasProps {
     renderer: Renderer;
@@ -20,12 +21,19 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         requestAnimationFrame(() => renderer.forceResize());
 
         renderer.initOnce().then(() => {
-            if (active) renderer.start();
+            if (!active) return;
+            const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
+            if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
+                host.appendChild(comparisonCanvas);
+            }
+            renderer.start();
         });
 
         return () => {
             active = false;
             renderer.stop();
+            const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
+            if (comparisonCanvas?.parentNode === host) host.removeChild(comparisonCanvas);
             if (renderer.canvas.parentNode === host) host.removeChild(renderer.canvas);
         };
     }, [renderer]);
