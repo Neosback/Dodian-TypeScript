@@ -3,12 +3,17 @@ import type { SdMapData } from "../../loader/SdMapData";
 import type { WebGLOsrsRenderer } from "../../WebGLOsrsRenderer";
 import { WebGPUGraphicsBackend } from "../../backend/WebGPUGraphicsBackend";
 import { buildMaterialTable } from "../../texture/MaterialTable";
+import {
+    type WebGPUAnimatedLocState,
+    syncWebGPUAnimatedLocsForMap,
+} from "../loc/WebGPUStaticLocResources";
 import { WebGPUStaticSceneRenderer } from "../WebGPUStaticSceneRenderer";
 import { createFallbackWaterTextureData } from "../terrain/WebGPUWaterResources";
 
 interface VisibleComparisonMap {
     mapX: number;
     mapY: number;
+    locsAnimated?: readonly WebGPUAnimatedLocState[];
 }
 
 interface TerrainComparisonState {
@@ -152,7 +157,6 @@ function installPartialMapObservers(
         if (mapData.locOnly || mapData.doorOnly) {
             appendPartialMap(state.queuedPartialMaps, key, mapData);
         } else {
-            // A full map payload supersedes partial payloads that did not commit yet.
             state.queuedPartialMaps.delete(key);
             state.acceptedPartialMaps.delete(key);
         }
@@ -430,12 +434,20 @@ export function renderWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
                 continue;
             }
 
-            state.visibleMaps[selectedCount] = map;
-            state.visibleMapLod[selectedCount] =
+            const isLod =
                 host.getMapTileDistanceFromPoint(map, cullTile.x, cullTile.y) >
-                lodThresholdTiles
-                    ? 1
-                    : 0;
+                lodThresholdTiles;
+            state.visibleMaps[selectedCount] = map;
+            state.visibleMapLod[selectedCount] = isLod ? 1 : 0;
+            if (map.locsAnimated.length > 0) {
+                syncWebGPUAnimatedLocsForMap(
+                    state.backend.device,
+                    map.mapX,
+                    map.mapY,
+                    map.locsAnimated,
+                    isLod,
+                );
+            }
             selectedCount++;
         }
 
