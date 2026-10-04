@@ -1,7 +1,7 @@
-import { PicoGL } from "picogl";
-
 import { profiler } from "../../render/PerformanceProfiler";
 import type { SceneViewportRect } from "../../render/render/viewportRect";
+import type { OverlayCommandExecutor } from "../../render/frame/OverlayCommandExecutor";
+import type { OverlayDrawCommand } from "../../render/frame/OverlayDrawCommand";
 import { Overlay, OverlayInitArgs, OverlayUpdateArgs, RenderPhase } from "./Overlay";
 
 // PERF: Per-overlay timing for debugging
@@ -9,44 +9,58 @@ const overlayTimings: Map<string, number> = new Map();
 let lastLogTime = 0;
 const LOG_INTERVAL_MS = 1000;
 
+interface OverlaySlot {
+    overlay: Overlay;
+    clipToViewport: boolean;
+    command: OverlayDrawCommand;
+}
+
 export class OverlayManager {
-    private overlays: Overlay[] = [];
-    private unclipped = new Set<Overlay>();
-    private app?: OverlayInitArgs["app"];
+    private slots: OverlaySlot[] = [];
+
+    constructor(private readonly commandExecutor: OverlayCommandExecutor) {}
 
     add(overlay: Overlay, clipToViewport = true): this {
-        this.overlays.push(overlay);
-        if (!clipToViewport) this.unclipped.add(overlay);
+        const overlayIndex = this.slots.length;
+        this.slots.push({
+            overlay,
+            clipToViewport,
+            command: {
+                overlayIndex,
+                phase: RenderPhase.PostPresent,
+                clipEnabled: false,
+                clipRect: { x: 0, y: 0, width: 0, height: 0 },
+            },
+        });
         return this;
     }
 
     init(args: OverlayInitArgs): void {
-        this.app = args.app;
-        for (const ov of this.overlays) ov.init(args);
+        for (const slot of this.slots) slot.overlay.init(args);
     }
 
     update(args: OverlayUpdateArgs): void {
         if (!profiler.enabled) {
-            for (const ov of this.overlays) ov.update(args);
+            for (const slot of this.slots) slot.overlay.update(args);
             return;
         }
 
         const start = performance.now();
-        for (const ov of this.overlays) ov.update(args);
+        for (const slot of this.slots) slot.overlay.update(args);
         profiler.recordGauge("overlayUpdateMs", performance.now() - start);
     }
 
     draw(phase: RenderPhase, viewport?: SceneViewportRect): void {
         if (!profiler.enabled) {
-            for (const ov of this.overlays) this.drawOverlay(ov, phase, viewport);
+            for (const slot of this.slots) this.executeSlot(slot, phase, viewport);
             return;
         }
 
         // Profile each overlay
-        for (const ov of this.overlays) {
-            const name = ov.constructor.name;
+        for (const slot of this.slots) {
+            const name = slot.overlay.constructor.name;
             const start = performance.now();
-            this.drawOverlay(ov, phase, viewport);
+            this.executeSlot(slot, phase, viewport);
             const elapsed = performance.now() - start;
             overlayTimings.set(name, (overlayTimings.get(name) ?? 0) + elapsed);
         }
@@ -72,24 +86,28 @@ export class OverlayManager {
         }
     }
 
-    private drawOverlay(overlay: Overlay, phase: RenderPhase, viewport?: SceneViewportRect): void {
-        const app = this.app;
-        if (!app || !viewport || this.unclipped.has(overlay)) {
-            overlay.draw(phase);
-            return;
+    private executeSlot(
+        slot: OverlaySlot,
+        phase: RenderPhase,
+        viewport?: SceneViewportRect,
+    ): void {
+        const command = slot.command;
+        command.phase = phase;
+        command.clipEnabled = slot.clipToViewport && viewport !== undefined;
+
+        if (command.clipEnabled && viewport) {
+            command.clipRect.x = viewport.x;
+            command.clipRect.y = viewport.y;
+            command.clipRect.width = viewport.width;
+            command.clipRect.height = viewport.height;
         }
-        app.enable(PicoGL.SCISSOR_TEST);
-        app.scissor(viewport.x, app.height - viewport.y - viewport.height, viewport.width, viewport.height);
-        try {
-            overlay.draw(phase);
-        } finally {
-            app.disable(PicoGL.SCISSOR_TEST);
-        }
+
+        this.commandExecutor.execute(command, slot.overlay);
     }
 
     dispose(): void {
-        for (const ov of this.overlays) ov.dispose();
-        this.overlays = [];
-        this.unclipped.clear();
+        for (const slot of this.slots) slot.overlay.dispose();
+        this.slots.length = 0;
+        this.commandExecutor.dispose?.();
     }
 }

@@ -35,9 +35,13 @@ Status: implemented on this branch.
 
 ### 1C. Renderer-neutral overlay command boundary
 
-Status: pending.
+Status: implemented on this branch.
 
-Separate world/UI overlay intent from direct WebGL calls so both graphics backends can consume the same ordered commands. Keep the current WebGL2 overlay implementation as the first consumer.
+- Represent ordered overlay passes as API-neutral commands containing phase, registration order, and optional viewport clipping.
+- Remove PicoGL scissor state from `OverlayManager`.
+- Execute the same command stream through a WebGL2-specific executor.
+- Reuse command/clip objects instead of allocating draw-command objects in the frame loop.
+- Individual overlay geometry remains WebGL-backed until the dedicated 2D/UI migration checkpoint.
 
 ### 2. Backend selection and WebGPU device bootstrap
 

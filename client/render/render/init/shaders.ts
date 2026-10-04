@@ -72,6 +72,7 @@ import {
     RenderPhase,
 } from "../../../ui/devoverlay/Overlay";
 import { OverlayManager } from "../../../ui/devoverlay/OverlayManager";
+import { WebGL2OverlayCommandExecutor } from "../../backend/WebGL2OverlayCommandExecutor";
 import type { TileMarkerOverlay } from "../../../ui/devoverlay/TileMarkerOverlay";
 import { TileTextOverlay } from "../../../ui/devoverlay/TileTextOverlay";
 import { WidgetsOverlay } from "../../../ui/devoverlay/WidgetsOverlay";
@@ -284,7 +285,9 @@ export async function initShaders(host: WebGLOsrsRendererHost, ): Promise<Progra
         }
 
         if (host.hoverLineProgram && host.sceneUniformBuffer) {
-            host.overlayManager = new OverlayManager();
+            host.overlayManager = new OverlayManager(
+                new WebGL2OverlayCommandExecutor(host.app),
+            );
             host.overlayManager.init({ app: host.app, sceneUniforms: host.sceneUniformBuffer });
         }
 
