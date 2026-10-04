@@ -189,6 +189,9 @@ export class WebGPUTerrainTextureResources {
     updateTextures(textures: ReadonlyMap<number, Int32Array>): number {
         let uploaded = 0;
         for (const [textureId, pixels] of textures) {
+            if (this.loadedTextureIds.has(textureId)) {
+                continue;
+            }
             if (this.uploadTexture(textureId, pixels)) {
                 uploaded++;
             }

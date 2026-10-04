@@ -12,7 +12,10 @@ interface TerrainComparisonState {
     renderer: WebGPUStaticSceneRenderer;
     previousOnMapRemoved?: (mapX: number, mapY: number) => void;
     mapRemovedWrapper?: (mapX: number, mapY: number) => void;
+    ready: boolean;
     failed: boolean;
+    pendingTextures: Map<number, Int32Array>;
+    pendingMaps: Map<string, { mapData: SdMapData; loadTime: number }>;
 }
 
 const states = new WeakMap<object, TerrainComparisonState>();
@@ -43,7 +46,13 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     const state = states.get(host);
     if (!state || state.failed) return;
     state.failed = true;
+    state.ready = false;
+    state.pendingTextures.clear();
+    state.pendingMaps.clear();
     state.canvas.style.display = "none";
+    state.pendingTextures.clear();
+    state.pendingMaps.clear();
+    state.ready = false;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     const message = reason instanceof Error ? reason.message : String(reason);
@@ -78,7 +87,10 @@ export async function initWebGPUTerrainComparison(
         backend,
         renderer,
         previousOnMapRemoved: host.mapManager.onMapRemoved,
+        ready: false,
         failed: false,
+        pendingTextures: new Map(),
+        pendingMaps: new Map(),
     };
     states.set(host, state);
 
@@ -134,6 +146,22 @@ export async function initWebGPUTerrainComparison(
         state.mapRemovedWrapper = wrapper;
         host.mapManager.onMapRemoved = wrapper;
 
+        state.ready = true;
+
+        if (state.pendingTextures.size > 0) {
+            renderer.updateTerrainTextures(state.pendingTextures);
+            state.pendingTextures.clear();
+        }
+        if (state.pendingMaps.size > 0) {
+            for (const pending of state.pendingMaps.values()) {
+                const { mapData, loadTime } = pending;
+                if (!host.mapManager.getMap(mapData.mapX, mapData.mapY)) continue;
+                renderer.updateTerrainTextures(mapData.loadedTextures);
+                renderer.uploadTerrain(mapData, loadTime);
+            }
+            state.pendingMaps.clear();
+        }
+
         if (host.canvas.parentElement && canvas.parentNode !== host.canvas.parentElement) {
             host.canvas.parentElement.appendChild(canvas);
         }
@@ -161,6 +189,12 @@ export function syncWebGPUTerrainTextures(
 ): void {
     const state = states.get(host);
     if (!state || state.failed) return;
+    if (!state.ready) {
+        for (const [textureId, pixels] of textures) {
+            state.pendingTextures.set(textureId, pixels);
+        }
+        return;
+    }
     try {
         state.renderer.updateTerrainTextures(textures);
     } catch (error) {
@@ -181,6 +215,16 @@ export function syncWebGPUTerrainMap(
         mapData.locOnly ||
         mapData.mapX >= 200
     ) return;
+    if (!state.ready) {
+        for (const [textureId, pixels] of mapData.loadedTextures) {
+            state.pendingTextures.set(textureId, pixels);
+        }
+        state.pendingMaps.set(
+            `${mapData.mapX | 0}:${mapData.mapY | 0}`,
+            { mapData, loadTime },
+        );
+        return;
+    }
     try {
         state.renderer.updateTerrainTextures(mapData.loadedTextures);
         state.renderer.uploadTerrain(mapData, loadTime);
@@ -192,6 +236,8 @@ export function syncWebGPUTerrainMap(
 export function clearWebGPUTerrainComparisonMaps(host: WebGLOsrsRenderer): void {
     const state = states.get(host);
     if (!state || state.failed) return;
+    state.pendingMaps.clear();
+    if (!state.ready) return;
     try {
         state.renderer.clearTerrain();
     } catch (error) {
@@ -201,7 +247,7 @@ export function clearWebGPUTerrainComparisonMaps(host: WebGLOsrsRenderer): void 
 
 export function renderWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
     const state = states.get(host);
-    if (!state || state.failed) return;
+    if (!state || state.failed || !state.ready) return;
     try {
         const width = Math.max(1, host.canvas.width | 0);
         const height = Math.max(1, host.canvas.height | 0);
