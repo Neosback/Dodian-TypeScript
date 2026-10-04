@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
-import { createWebGPUStaticLocPlan } from "../render/webgpu/loc/WebGPUStaticLocResources";
+import {
+    createWebGPUStaticLocPlan,
+    createWebGPUStaticLocPlanFromData,
+} from "../render/webgpu/loc/WebGPUStaticLocResources";
 
 const modelTextureData = new Uint16Array(24);
 // Two draw-header texels. Their R component points at the first instance texel.
@@ -50,6 +53,73 @@ assert.deepEqual(
     Array.from(modelTextureData.slice(8, 16)),
 );
 
+function makeVariantData(firstInstance: number, packedSeed: number): Uint16Array {
+    const data = new Uint16Array(16);
+    data[0] = 1 + firstInstance;
+    const offset = 4 + firstInstance * 4;
+    data[offset] = packedSeed | (1 << 14);
+    data[offset + 1] = (packedSeed + 64) | (1 << 14);
+    data[offset + 2] = 2 | (2 << 6) | (5 << 8);
+    data[offset + 3] = packedSeed + 1;
+    return data;
+}
+
+const alphaPlan = createWebGPUStaticLocPlanFromData(
+    makeVariantData(0, 320),
+    [[24, 6, 1]],
+    new Uint8Array([1]),
+);
+assert.deepEqual(alphaPlan.draws, [
+    {
+        firstIndex: 6,
+        indexCount: 6,
+        instanceCount: 1,
+        firstInstance: 0,
+        plane: 1,
+    },
+]);
+assert.equal(alphaPlan.modelInfoWords[0], 320 | (1 << 14));
+
+const lodPlan = createWebGPUStaticLocPlanFromData(
+    makeVariantData(1, 448),
+    [[48, 3, 1]],
+    new Uint8Array([2]),
+);
+assert.deepEqual(lodPlan.draws, [
+    {
+        firstIndex: 12,
+        indexCount: 3,
+        instanceCount: 1,
+        firstInstance: 1,
+        plane: 2,
+    },
+]);
+assert.equal(lodPlan.modelInfoWords[4], 448 | (1 << 14));
+
+const lodAlphaPlan = createWebGPUStaticLocPlanFromData(
+    makeVariantData(0, 576),
+    [[60, 9, 2]],
+    new Uint8Array([3]),
+);
+assert.deepEqual(lodAlphaPlan.draws, [
+    {
+        firstIndex: 15,
+        indexCount: 9,
+        instanceCount: 2,
+        firstInstance: 0,
+        plane: 3,
+    },
+]);
+assert.equal(lodAlphaPlan.modelInfoWords[0], 576 | (1 << 14));
+
+const emptyPlan = createWebGPUStaticLocPlanFromData(
+    new Uint16Array(0),
+    [],
+    new Uint8Array(0),
+);
+assert.deepEqual(emptyPlan.draws, []);
+assert.equal(emptyPlan.modelInfoWords.length, 4);
+
 assert.throws(
     () =>
         createWebGPUStaticLocPlan({
@@ -62,4 +132,4 @@ assert.throws(
     /4-byte aligned/,
 );
 
-console.log("webgpu static-loc draw-plan checks passed");
+console.log("webgpu static-loc draw-plan and variant checks passed");
