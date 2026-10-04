@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, and animated loc draw-range parity implemented; world-entity parity still pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, and primary world-entity transforms implemented; ground items and specialized ordering remain pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -135,8 +135,15 @@ Status: opaque, alpha, LOD, mutable replacement, doors, and animated loc draw-ra
 - Apply animated frames by mutating only WebGPU CPU draw metadata (index offset, index count, and instance count) for the selected full-detail/LOD opaque and alpha passes; static vertex/index/model-info GPU buffers are not rewritten per frame.
 - Preserve model placement, roof-plane metadata, and initially hidden animation slots while draw counts change; zero-count slots retain their model records so later frames can reactivate them.
 - `locOnly` replacement naturally swaps both the ordinary WebGPU loc resource and the WebGL animation source used by the comparison on the next frame.
+- Allow world-entity overlay map payloads (`mapX/mapY >= 200`) into the WebGPU comparison instead of excluding them, preserving the worker's `renderPosX/renderPosY` placement override.
+- Expand the per-map uniform block from 32 to 96 bytes with an identity `mat4` at byte offset 32; ordinary maps therefore retain identical rendering while overlay maps can update only their transform bytes.
+- Apply the world-entity matrix after `scene.viewMatrix` and before projection for both terrain and loc/door vertex paths, exactly matching WebGL's `u_worldEntityTransform * (u_viewMatrix * worldPos)` ordering.
+- Keep `worldPos`, fog distance, water UVs, and water lighting on the untransformed world/view inputs, matching the existing GLSL behavior.
+- Reuse the authoritative `WorldEntityAnimator` matrix each frame and copy it into the existing map uniform buffers only when it changes; terrain, loc, and door geometry are not rebuilt for bobbing/motion.
+- Keep the WebGPU backend's shader-source transform generic and opt-in; the A/B comparison applies the static-scene patch only to the `terrain-foundation` WGSL module.
+- Primary transformed world-entity terrain/loc/door rendering is covered here. The special overlap/ghost redraw/opacity path and dynamic world-entity NPC content remain later parity work.
 - Loc and door resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Remaining static-scene work includes world-entity transforms, ground-item parity, and the dedicated wall/decor depth/order rules.
+- Remaining static-scene work includes ground-item parity and the dedicated wall/decor depth/order rules.
 
 ### 4. Ordering, depth, culling, and picking
 
@@ -148,7 +155,7 @@ Carry over face priorities, wall/decor depth rules, back-face culling, chunk cul
 
 Status: pending.
 
-Animated ordinary loc draw-range parity is already handled in 3C. Remaining dynamic-scene work includes players, NPCs, projectiles, spot animations, skinned/other dynamic scenery, and interaction highlights.
+Animated ordinary loc draw-range parity is already handled in 3C. Remaining dynamic-scene work includes players, NPCs, projectiles, spot animations, skinned/other dynamic scenery, world-entity dynamic content, and interaction highlights.
 
 ### 6. 2D/UI
 
