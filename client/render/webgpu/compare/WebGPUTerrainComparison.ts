@@ -8,6 +8,10 @@ import {
     syncWebGPUAnimatedLocsForMap,
 } from "../loc/WebGPUStaticLocResources";
 import { WebGPUStaticSceneRenderer } from "../WebGPUStaticSceneRenderer";
+import { patchWebGPUStaticSceneShaderForWorldEntities } from "../WebGPUStaticSceneShaderPatch";
+import {
+    syncWebGPUWorldEntityTransformForMap,
+} from "../terrain/WebGPUTerrainMapResources";
 import { createFallbackWaterTextureData } from "../terrain/WebGPUWaterResources";
 
 interface VisibleComparisonMap {
@@ -128,7 +132,7 @@ function applyAcceptedPartialUpdate(
     state: TerrainComparisonState,
     mapData: SdMapData,
 ): void {
-    if (state.failed || !state.ready || mapData.mapX >= 200) return;
+    if (state.failed || !state.ready) return;
     if (!host.mapManager.getMap(mapData.mapX, mapData.mapY)) return;
 
     state.renderer.updateTerrainTextures(mapData.loadedTextures);
@@ -250,6 +254,10 @@ export async function initWebGPUTerrainComparison(
             onUncapturedError: (message) => {
                 console.warn(`[WebGPU terrain comparison] validation: ${message}`);
             },
+            shaderSourceTransform: (code, label) =>
+                label === "terrain-foundation"
+                    ? patchWebGPUStaticSceneShaderForWorldEntities(code)
+                    : code,
         });
         await renderer.init(canvas);
 
@@ -367,8 +375,7 @@ export function syncWebGPUTerrainMap(
         !state ||
         state.failed ||
         mapData.doorOnly ||
-        mapData.locOnly ||
-        mapData.mapX >= 200
+        mapData.locOnly
     ) return;
     if (!state.ready) {
         for (const [textureId, pixels] of mapData.loadedTextures) {
@@ -439,6 +446,16 @@ export function renderWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
                 lodThresholdTiles;
             state.visibleMaps[selectedCount] = map;
             state.visibleMapLod[selectedCount] = isLod ? 1 : 0;
+
+            if (host.mapManager.worldEntityMapIds.has(map.id)) {
+                syncWebGPUWorldEntityTransformForMap(
+                    state.backend.device,
+                    map.mapX,
+                    map.mapY,
+                    host.getWorldEntityTransformForMap(map),
+                );
+            }
+
             if (map.locsAnimated.length > 0) {
                 syncWebGPUAnimatedLocsForMap(
                     state.backend.device,
