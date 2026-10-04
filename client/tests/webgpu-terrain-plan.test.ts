@@ -15,6 +15,11 @@ const plan = createWebGPUTerrainDrawPlan({
         [12, 3, 1],
     ],
     drawRangesPlanes: new Uint8Array([0, 1, 2]),
+    drawRangesAlpha: [
+        [24, 3, 1],
+        [36, 6, 2],
+    ],
+    drawRangesAlphaPlanes: new Uint8Array([1, 3]),
     borderSize: 0,
     heightMapSize: 1,
     waterMaskTextureData: new Uint8Array(16),
@@ -27,6 +32,10 @@ assert.equal(plan.renderPosY, 101);
 assert.deepEqual(plan.draws, [
     { firstIndex: 0, indexCount: 3, instanceCount: 1, plane: 0 },
     { firstIndex: 3, indexCount: 3, instanceCount: 1, plane: 2 },
+]);
+assert.deepEqual(plan.alphaDraws, [
+    { firstIndex: 6, indexCount: 3, instanceCount: 1, plane: 1 },
+    { firstIndex: 9, indexCount: 6, instanceCount: 2, plane: 3 },
 ]);
 
 assert.throws(

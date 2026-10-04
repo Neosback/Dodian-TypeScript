@@ -506,8 +506,7 @@ fn vsMain(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-@fragment
-fn fsMain(input: VertexOutput) -> @location(0) vec4<f32> {
+fn shadeFragment(input: VertexOutput) -> vec4<f32> {
     let material = getMaterial(input.textureId);
     var textureColor = sampleTextureAtlas(input.textureId, input.texCoord);
 
@@ -549,5 +548,25 @@ fn fsMain(input: VertexOutput) -> @location(0) vec4<f32> {
         clamp(finalRgb, vec3<f32>(0.0), vec3<f32>(1.0)),
         alpha,
     );
+}
+
+@fragment
+fn fsMain(input: VertexOutput) -> @location(0) vec4<f32> {
+    return shadeFragment(input);
+}
+
+@fragment
+fn fsMainAlpha(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Match the WebGL DISCARD_ALPHA program: test the base texture sample
+    // before the animated-frame sampling and the rest of the water/fog work.
+    let textureColor = sampleTextureAtlas(input.textureId, input.texCoord);
+    let alpha = textureColor.a * input.color.a;
+    if (
+        (input.textureId == 0u && alpha < 0.01) ||
+        textureColor.a < input.alphaCutOff
+    ) {
+        discard;
+    }
+    return shadeFragment(input);
 }
 `;

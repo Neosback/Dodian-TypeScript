@@ -6,6 +6,7 @@ import {
     type WebGPUBindGroupLayoutLike,
     type WebGPUBindGroupLike,
     type WebGPUDeviceLike,
+    type WebGPURenderPassEncoderLike,
     type WebGPURenderPipelineLike,
     type WebGPUTextureLike,
 } from "../backend/WebGPUPlatform";
@@ -19,6 +20,22 @@ import {
 import { WebGPUSceneUniformBuffer } from "./WebGPUSceneUniforms";
 import { WebGPUWaterResources } from "./terrain/WebGPUWaterResources";
 
+export type WebGPUTerrainPipelineVariant =
+    | "opaque-cull"
+    | "opaque-no-cull"
+    | "alpha-cull"
+    | "alpha-no-cull";
+
+export function getWebGPUTerrainPipelineVariant(
+    transparent: boolean,
+    cullBackFace: boolean,
+): WebGPUTerrainPipelineVariant {
+    if (transparent) {
+        return cullBackFace ? "alpha-cull" : "alpha-no-cull";
+    }
+    return cullBackFace ? "opaque-cull" : "opaque-no-cull";
+}
+
 export class WebGPUStaticSceneRenderer {
     private device?: WebGPUDeviceLike;
     private sceneUniforms?: WebGPUSceneUniformBuffer;
@@ -29,19 +46,19 @@ export class WebGPUStaticSceneRenderer {
     private sceneBindGroup?: WebGPUBindGroupLike;
     private terrainTextures?: WebGPUTerrainTextureResources;
     private waterResources?: WebGPUWaterResources;
-    private terrainPipeline?: WebGPURenderPipelineLike;
+    private terrainOpaqueCullPipeline?: WebGPURenderPipelineLike;
+    private terrainOpaqueNoCullPipeline?: WebGPURenderPipelineLike;
+    private terrainAlphaCullPipeline?: WebGPURenderPipelineLike;
+    private terrainAlphaNoCullPipeline?: WebGPURenderPipelineLike;
     private depthTexture?: WebGPUTextureLike;
     private depthWidth = 0;
     private depthHeight = 0;
-    private maps = new Map<string, WebGPUTerrainMapResources>();
-    private visibleMapIds = new Set<number>();
+    private mapsById = new Map<number, WebGPUTerrainMapResources>();
+    private mapOrder: number[] = [];
+    private visibleMapOrder: number[] = [];
     private visibilityFilterEnabled = false;
 
     constructor(readonly backend: WebGPUGraphicsBackend) {}
-
-    private mapKey(mapX: number, mapY: number): string {
-        return `${mapX | 0}:${mapY | 0}`;
-    }
 
     private mapId(mapX: number, mapY: number): number {
         return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
@@ -142,42 +159,90 @@ export class WebGPUStaticSceneRenderer {
                 waterBindGroupLayout,
             ],
         });
-        const terrainPipeline = device.createRenderPipeline({
-            label: "terrain-foundation-pipeline",
-            layout: pipelineLayout,
-            vertex: {
-                module,
-                entryPoint: "vsMain",
-                buffers: [
-                    {
-                        arrayStride: 12,
-                        stepMode: "vertex",
-                        attributes: [
-                            {
-                                shaderLocation: 0,
-                                offset: 0,
-                                format: "uint32x3",
-                            },
-                        ],
-                    },
-                ],
+        const alphaBlend = {
+            color: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
             },
-            fragment: {
-                module,
-                entryPoint: "fsMain",
-                targets: [{ format: canvasResources.format }],
+            alpha: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
             },
-            primitive: {
-                topology: "triangle-list",
-                frontFace: "ccw",
-                cullMode: "back",
-            },
-            depthStencil: {
-                format: "depth24plus",
-                depthWriteEnabled: true,
-                depthCompare: "less-equal",
-            },
-        });
+        };
+        const createTerrainPipeline = (
+            label: string,
+            fragmentEntryPoint: "fsMain" | "fsMainAlpha",
+            cullMode: "back" | "none",
+            transparent: boolean,
+        ): WebGPURenderPipelineLike =>
+            device.createRenderPipeline({
+                label,
+                layout: pipelineLayout,
+                vertex: {
+                    module,
+                    entryPoint: "vsMain",
+                    buffers: [
+                        {
+                            arrayStride: 12,
+                            stepMode: "vertex",
+                            attributes: [
+                                {
+                                    shaderLocation: 0,
+                                    offset: 0,
+                                    format: "uint32x3",
+                                },
+                            ],
+                        },
+                    ],
+                },
+                fragment: {
+                    module,
+                    entryPoint: fragmentEntryPoint,
+                    targets: [
+                        transparent
+                            ? { format: canvasResources.format, blend: alphaBlend }
+                            : { format: canvasResources.format },
+                    ],
+                },
+                primitive: {
+                    topology: "triangle-list",
+                    frontFace: "ccw",
+                    cullMode,
+                },
+                depthStencil: {
+                    format: "depth24plus",
+                    // WebGL keeps depthMask(true) through its transparent scene pass.
+                    depthWriteEnabled: true,
+                    depthCompare: "less-equal",
+                },
+            });
+
+        const terrainOpaqueCullPipeline = createTerrainPipeline(
+            "terrain-opaque-cull-pipeline",
+            "fsMain",
+            "back",
+            false,
+        );
+        const terrainOpaqueNoCullPipeline = createTerrainPipeline(
+            "terrain-opaque-no-cull-pipeline",
+            "fsMain",
+            "none",
+            false,
+        );
+        const terrainAlphaCullPipeline = createTerrainPipeline(
+            "terrain-alpha-cull-pipeline",
+            "fsMainAlpha",
+            "back",
+            true,
+        );
+        const terrainAlphaNoCullPipeline = createTerrainPipeline(
+            "terrain-alpha-no-cull-pipeline",
+            "fsMainAlpha",
+            "none",
+            true,
+        );
 
         this.sceneBindGroupLayout = sceneBindGroupLayout;
         this.mapBindGroupLayout = mapBindGroupLayout;
@@ -193,7 +258,10 @@ export class WebGPUStaticSceneRenderer {
         );
         this.sceneUniforms = sceneUniforms;
         this.sceneBindGroup = sceneBindGroup;
-        this.terrainPipeline = terrainPipeline;
+        this.terrainOpaqueCullPipeline = terrainOpaqueCullPipeline;
+        this.terrainOpaqueNoCullPipeline = terrainOpaqueNoCullPipeline;
+        this.terrainAlphaCullPipeline = terrainAlphaCullPipeline;
+        this.terrainAlphaNoCullPipeline = terrainAlphaNoCullPipeline;
 
         this.resize(canvas.width, canvas.height);
     }
@@ -268,26 +336,36 @@ export class WebGPUStaticSceneRenderer {
             throw new Error("WebGPU static scene renderer is not initialized");
         }
 
-        const key = this.mapKey(data.mapX, data.mapY);
-        this.maps.get(key)?.dispose();
-        this.maps.set(
-            key,
+        const id = this.mapId(data.mapX, data.mapY);
+        const existing = this.mapsById.get(id);
+        existing?.dispose();
+        if (!existing) {
+            this.mapOrder.push(id);
+        }
+        this.mapsById.set(
+            id,
             new WebGPUTerrainMapResources(device, mapBindGroupLayout, data, loadTime),
         );
     }
 
     removeTerrain(mapX: number, mapY: number): void {
-        const key = this.mapKey(mapX, mapY);
-        this.maps.get(key)?.dispose();
-        this.maps.delete(key);
+        const id = this.mapId(mapX, mapY);
+        this.mapsById.get(id)?.dispose();
+        if (this.mapsById.delete(id)) {
+            const index = this.mapOrder.indexOf(id);
+            if (index >= 0) {
+                this.mapOrder.splice(index, 1);
+            }
+        }
     }
 
     clearTerrain(): void {
-        for (const map of this.maps.values()) {
+        for (const map of this.mapsById.values()) {
             map.dispose();
         }
-        this.maps.clear();
-        this.visibleMapIds.clear();
+        this.mapsById.clear();
+        this.mapOrder.length = 0;
+        this.visibleMapOrder.length = 0;
     }
 
     setVisibleTerrainMaps(
@@ -295,11 +373,46 @@ export class WebGPUStaticSceneRenderer {
         count: number,
     ): void {
         this.visibilityFilterEnabled = true;
-        this.visibleMapIds.clear();
         const limit = Math.min(Math.max(0, count | 0), maps.length);
+        this.visibleMapOrder.length = limit;
         for (let i = 0; i < limit; i++) {
             const map = maps[i];
-            this.visibleMapIds.add(this.mapId(map.mapX, map.mapY));
+            this.visibleMapOrder[i] = this.mapId(map.mapX, map.mapY);
+        }
+    }
+
+    private drawTerrainPass(
+        pass: WebGPURenderPassEncoderLike,
+        frame: SceneFrameDescription,
+        transparent: boolean,
+    ): void {
+        const order = this.visibilityFilterEnabled ? this.visibleMapOrder : this.mapOrder;
+        const start = transparent ? order.length - 1 : 0;
+        const end = transparent ? -1 : order.length;
+        const step = transparent ? -1 : 1;
+
+        for (let i = start; i !== end; i += step) {
+            const map = this.mapsById.get(order[i]);
+            if (!map) {
+                continue;
+            }
+
+            pass.setVertexBuffer(0, map.vertexBuffer);
+            pass.setIndexBuffer(map.indexBuffer, "uint32");
+            const draws = transparent ? map.alphaDraws : map.draws;
+            for (const draw of draws) {
+                if (draw.plane > frame.roofPlaneLimit) {
+                    continue;
+                }
+                pass.setBindGroup(1, draw.mapBindGroup);
+                pass.drawIndexed(
+                    draw.indexCount,
+                    draw.instanceCount,
+                    draw.firstIndex,
+                    0,
+                    0,
+                );
+            }
         }
     }
 
@@ -308,7 +421,14 @@ export class WebGPUStaticSceneRenderer {
         const context = this.backend.canvasContext;
         const sceneUniforms = this.sceneUniforms;
         const sceneBindGroup = this.sceneBindGroup;
-        const terrainPipeline = this.terrainPipeline;
+        const opaquePipeline =
+            getWebGPUTerrainPipelineVariant(false, frame.cullBackFace) === "opaque-cull"
+                ? this.terrainOpaqueCullPipeline
+                : this.terrainOpaqueNoCullPipeline;
+        const alphaPipeline =
+            getWebGPUTerrainPipelineVariant(true, frame.cullBackFace) === "alpha-cull"
+                ? this.terrainAlphaCullPipeline
+                : this.terrainAlphaNoCullPipeline;
         const terrainTextures = this.terrainTextures;
         const waterResources = this.waterResources;
         const depthTexture = this.depthTexture;
@@ -317,7 +437,8 @@ export class WebGPUStaticSceneRenderer {
             !context ||
             !sceneUniforms ||
             !sceneBindGroup ||
-            !terrainPipeline ||
+            !opaquePipeline ||
+            !alphaPipeline ||
             !terrainTextures ||
             !waterResources ||
             !depthTexture
@@ -357,7 +478,6 @@ export class WebGPUStaticSceneRenderer {
             },
         });
 
-        pass.setPipeline(terrainPipeline);
         pass.setBindGroup(0, sceneBindGroup);
         pass.setBindGroup(2, terrainTextures.bindGroup);
         pass.setBindGroup(3, waterResources.bindGroup);
@@ -380,30 +500,12 @@ export class WebGPUStaticSceneRenderer {
             );
         }
 
-        for (const map of this.maps.values()) {
-            if (
-                this.visibilityFilterEnabled &&
-                !this.visibleMapIds.has(this.mapId(map.plan.mapX, map.plan.mapY))
-            ) {
-                continue;
-            }
-            pass.setVertexBuffer(0, map.vertexBuffer);
-            pass.setIndexBuffer(map.indexBuffer, "uint32");
+        pass.setPipeline(opaquePipeline);
+        this.drawTerrainPass(pass, frame, false);
 
-            for (const draw of map.draws) {
-                if (draw.plane > frame.roofPlaneLimit) {
-                    continue;
-                }
-                pass.setBindGroup(1, draw.mapBindGroup);
-                pass.drawIndexed(
-                    draw.indexCount,
-                    draw.instanceCount,
-                    draw.firstIndex,
-                    0,
-                    0,
-                );
-            }
-        }
+        // WebGL traverses visible map squares in reverse for the alpha pass.
+        pass.setPipeline(alphaPipeline);
+        this.drawTerrainPass(pass, frame, true);
 
         pass.end();
         device.queue.submit([encoder.finish()]);
@@ -424,11 +526,16 @@ export class WebGPUStaticSceneRenderer {
         this.terrainTextures = undefined;
         this.waterResources?.dispose();
         this.waterResources = undefined;
-        this.terrainPipeline = undefined;
+        this.terrainOpaqueCullPipeline = undefined;
+        this.terrainOpaqueNoCullPipeline = undefined;
+        this.terrainAlphaCullPipeline = undefined;
+        this.terrainAlphaNoCullPipeline = undefined;
         this.device = undefined;
         this.depthWidth = 0;
         this.depthHeight = 0;
         this.visibilityFilterEnabled = false;
-        this.visibleMapIds.clear();
+        this.visibleMapOrder.length = 0;
+        this.mapOrder.length = 0;
+        this.mapsById.clear();
     }
 }

@@ -105,6 +105,9 @@ Status: water shader/resources and opt-in A/B activation implemented.
 - Chain map-removal callbacks so pruned WebGL map squares remove their WebGPU terrain resources too.
 - On WebGPU init, render, validation, or device-loss failure, immediately hide/dispose the comparison surface and leave WebGL2 running.
 - Keep `?renderer=webgpu` reserved for the eventual full renderer instead of silently treating a terrain-only preview as a complete backend.
+- Submit terrain alpha ranges after opaque terrain, preserve WebGL's reverse visible-map traversal for the alpha pass, and apply the same material alpha-cutoff discard rule.
+- Preserve WebGL's current transparent-terrain depth behavior: depth test `less-equal` with depth writes still enabled.
+- Cache cull/no-cull variants for both opaque and alpha terrain pipelines and select from `SceneFrameDescription.cullBackFace` without rebuilding pipelines in the frame loop.
 
 After terrain parity, continue with static scenery/locs.
 

@@ -23,6 +23,7 @@ export interface WebGPUTerrainDrawPlan {
     renderPosX: number;
     renderPosY: number;
     draws: WebGPUTerrainDrawPlanEntry[];
+    alphaDraws: WebGPUTerrainDrawPlanEntry[];
 }
 
 export type WebGPUTerrainUploadData = Pick<
@@ -38,15 +39,16 @@ export type WebGPUTerrainUploadData = Pick<
     | "borderSize"
     | "heightMapSize"
     | "waterMaskTextureData"
->;
+> &
+    Partial<Pick<SdMapData, "drawRangesAlpha" | "drawRangesAlphaPlanes">>;
 
-export function createWebGPUTerrainDrawPlan(
-    data: WebGPUTerrainUploadData,
-): WebGPUTerrainDrawPlan {
-    const draws: WebGPUTerrainDrawPlanEntry[] = [];
-
-    for (let i = 0; i < data.drawRanges.length; i++) {
-        const range: DrawRange = data.drawRanges[i];
+function appendDrawPlan(
+    output: WebGPUTerrainDrawPlanEntry[],
+    ranges: readonly DrawRange[],
+    planes: Uint8Array | undefined,
+): void {
+    for (let i = 0; i < ranges.length; i++) {
+        const range = ranges[i];
         const byteOffset = range[0] | 0;
         const indexCount = range[1] | 0;
         const instanceCount = Math.max(1, range[2] | 0);
@@ -57,13 +59,27 @@ export function createWebGPUTerrainDrawPlan(
             throw new Error(`Terrain index byte offset must be 4-byte aligned: ${byteOffset}`);
         }
 
-        draws.push({
+        output.push({
             firstIndex: byteOffset >>> 2,
             indexCount,
             instanceCount,
-            plane: data.drawRangesPlanes[i] ?? 0,
+            plane: planes?.[i] ?? 0,
         });
     }
+}
+
+export function createWebGPUTerrainDrawPlan(
+    data: WebGPUTerrainUploadData,
+): WebGPUTerrainDrawPlan {
+    const draws: WebGPUTerrainDrawPlanEntry[] = [];
+    const alphaDraws: WebGPUTerrainDrawPlanEntry[] = [];
+
+    appendDrawPlan(draws, data.drawRanges, data.drawRangesPlanes);
+    appendDrawPlan(
+        alphaDraws,
+        data.drawRangesAlpha ?? [],
+        data.drawRangesAlphaPlanes,
+    );
 
     return {
         mapX: data.mapX | 0,
@@ -71,6 +87,7 @@ export function createWebGPUTerrainDrawPlan(
         renderPosX: data.renderPosX ?? data.mapX,
         renderPosY: data.renderPosY ?? data.mapY,
         draws,
+        alphaDraws,
     };
 }
 
@@ -106,6 +123,7 @@ export class WebGPUTerrainMapResources {
     readonly indexBuffer: WebGPUBufferLike;
     readonly waterMask: WebGPUWaterMaskResources;
     readonly draws: WebGPUTerrainDrawResources[];
+    readonly alphaDraws: WebGPUTerrainDrawResources[];
 
     constructor(
         private readonly device: WebGPUDeviceLike,
@@ -138,38 +156,45 @@ export class WebGPUTerrainMapResources {
             arrayLayerCount: 4,
         });
 
-        this.draws = this.plan.draws.map((draw, index) => {
-            const uniformData = new Float32Array([
-                this.plan.renderPosX,
-                this.plan.renderPosY,
-                draw.plane,
-                loadTime,
-                data.borderSize,
-                0,
-                0,
-                0,
-            ]);
-            const mapUniformBuffer = createUploadedBuffer(
-                device,
-                `terrain-${this.plan.mapX}-${this.plan.mapY}-draw-${index}-uniforms`,
-                WEBGPU_BUFFER_USAGE.UNIFORM,
-                uniformData,
-            );
-            const mapBindGroup = device.createBindGroup({
-                label: `terrain-${this.plan.mapX}-${this.plan.mapY}-draw-${index}-bind-group`,
-                layout: mapBindGroupLayout,
-                entries: [
-                    { binding: 0, resource: { buffer: mapUniformBuffer } },
-                    { binding: 1, resource: waterMaskView },
-                ],
+        const createDrawResources = (
+            draws: readonly WebGPUTerrainDrawPlanEntry[],
+            passLabel: string,
+        ): WebGPUTerrainDrawResources[] =>
+            draws.map((draw, index) => {
+                const uniformData = new Float32Array([
+                    this.plan.renderPosX,
+                    this.plan.renderPosY,
+                    draw.plane,
+                    loadTime,
+                    data.borderSize,
+                    0,
+                    0,
+                    0,
+                ]);
+                const mapUniformBuffer = createUploadedBuffer(
+                    device,
+                    `terrain-${this.plan.mapX}-${this.plan.mapY}-${passLabel}-draw-${index}-uniforms`,
+                    WEBGPU_BUFFER_USAGE.UNIFORM,
+                    uniformData,
+                );
+                const mapBindGroup = device.createBindGroup({
+                    label: `terrain-${this.plan.mapX}-${this.plan.mapY}-${passLabel}-draw-${index}-bind-group`,
+                    layout: mapBindGroupLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: mapUniformBuffer } },
+                        { binding: 1, resource: waterMaskView },
+                    ],
+                });
+
+                return {
+                    ...draw,
+                    mapUniformBuffer,
+                    mapBindGroup,
+                };
             });
 
-            return {
-                ...draw,
-                mapUniformBuffer,
-                mapBindGroup,
-            };
-        });
+        this.draws = createDrawResources(this.plan.draws, "opaque");
+        this.alphaDraws = createDrawResources(this.plan.alphaDraws, "alpha");
     }
 
     dispose(): void {
@@ -179,6 +204,10 @@ export class WebGPUTerrainMapResources {
         for (const draw of this.draws) {
             draw.mapUniformBuffer.destroy?.();
         }
+        for (const draw of this.alphaDraws) {
+            draw.mapUniformBuffer.destroy?.();
+        }
         this.draws.length = 0;
+        this.alphaDraws.length = 0;
     }
 }
