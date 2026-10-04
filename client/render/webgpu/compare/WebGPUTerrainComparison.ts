@@ -167,7 +167,13 @@ export function syncWebGPUTerrainMap(
     loadTime: number,
 ): void {
     const state = states.get(host);
-    if (!state || state.failed || mapData.doorOnly || mapData.locOnly) return;
+    if (
+        !state ||
+        state.failed ||
+        mapData.doorOnly ||
+        mapData.locOnly ||
+        mapData.mapX >= 200
+    ) return;
     try {
         state.renderer.updateTerrainTextures(mapData.loadedTextures);
         state.renderer.uploadTerrain(mapData, loadTime);
@@ -194,6 +200,10 @@ export function renderWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
         const height = Math.max(1, host.canvas.height | 0);
         if (state.canvas.width !== width) state.canvas.width = width;
         if (state.canvas.height !== height) state.canvas.height = height;
+        state.renderer.setVisibleTerrainMaps(
+            host.mapManager.visibleMaps,
+            host.mapManager.visibleMapCount,
+        );
         state.renderer.render(host.sceneFrameDescription);
     } catch (error) {
         disableComparison(host, error);

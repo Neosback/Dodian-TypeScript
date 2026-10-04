@@ -43,7 +43,8 @@ struct MapUniforms {
     plane: f32,
     loadTime: f32,
     borderSize: f32,
-    _padding: vec3<f32>,
+    _padding0: f32,
+    _padding1: vec2<f32>,
 };
 
 struct Material {

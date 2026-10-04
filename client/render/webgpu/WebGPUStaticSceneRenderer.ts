@@ -34,11 +34,17 @@ export class WebGPUStaticSceneRenderer {
     private depthWidth = 0;
     private depthHeight = 0;
     private maps = new Map<string, WebGPUTerrainMapResources>();
+    private visibleMapIds = new Set<number>();
+    private visibilityFilterEnabled = false;
 
     constructor(readonly backend: WebGPUGraphicsBackend) {}
 
     private mapKey(mapX: number, mapY: number): string {
         return `${mapX | 0}:${mapY | 0}`;
+    }
+
+    private mapId(mapX: number, mapY: number): number {
+        return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
     }
 
     async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -277,7 +283,24 @@ export class WebGPUStaticSceneRenderer {
     }
 
     clearTerrain(): void {
-        this.clearTerrain();
+        for (const map of this.maps.values()) {
+            map.dispose();
+        }
+        this.maps.clear();
+        this.visibleMapIds.clear();
+    }
+
+    setVisibleTerrainMaps(
+        maps: readonly { mapX: number; mapY: number }[],
+        count: number,
+    ): void {
+        this.visibilityFilterEnabled = true;
+        this.visibleMapIds.clear();
+        const limit = Math.min(Math.max(0, count | 0), maps.length);
+        for (let i = 0; i < limit; i++) {
+            const map = maps[i];
+            this.visibleMapIds.add(this.mapId(map.mapX, map.mapY));
+        }
     }
 
     render(frame: SceneFrameDescription): void {
@@ -358,6 +381,12 @@ export class WebGPUStaticSceneRenderer {
         }
 
         for (const map of this.maps.values()) {
+            if (
+                this.visibilityFilterEnabled &&
+                !this.visibleMapIds.has(this.mapId(map.plan.mapX, map.plan.mapY))
+            ) {
+                continue;
+            }
             pass.setVertexBuffer(0, map.vertexBuffer);
             pass.setIndexBuffer(map.indexBuffer, "uint32");
 
@@ -381,10 +410,7 @@ export class WebGPUStaticSceneRenderer {
     }
 
     dispose(): void {
-        for (const map of this.maps.values()) {
-            map.dispose();
-        }
-        this.maps.clear();
+        this.clearTerrain();
         this.depthTexture?.destroy?.();
         this.depthTexture = undefined;
         this.sceneUniforms?.dispose();
@@ -402,5 +428,7 @@ export class WebGPUStaticSceneRenderer {
         this.device = undefined;
         this.depthWidth = 0;
         this.depthHeight = 0;
+        this.visibilityFilterEnabled = false;
+        this.visibleMapIds.clear();
     }
 }
