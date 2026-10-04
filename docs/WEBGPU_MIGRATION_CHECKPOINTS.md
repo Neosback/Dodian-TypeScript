@@ -26,9 +26,18 @@ Status: implemented on this branch.
 
 ### 1B. Renderer-neutral frame description
 
+Status: implemented on this branch.
+
+- Add a reusable CPU-owned `SceneFrameDescription` with no graphics API types.
+- Copy camera matrices, viewport geometry, timing, fog, colour, visibility, and scene settings into it each frame without per-frame allocation.
+- Move the WebGL2 scene-uniform mapping into a backend-specific uploader.
+- Keep existing rendering order and shader uniform layout unchanged.
+
+### 1C. Renderer-neutral overlay command boundary
+
 Status: pending.
 
-Extract the minimum per-frame CPU description needed by both backends: timing, viewport, camera matrices, visibility state, scene settings, and renderer-neutral overlay commands.
+Separate world/UI overlay intent from direct WebGL calls so both graphics backends can consume the same ordered commands. Keep the current WebGL2 overlay implementation as the first consumer.
 
 ### 2. Backend selection and WebGPU device bootstrap
 

@@ -187,6 +187,8 @@ import {
     createProjectileProgram,
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
+import { uploadWebGL2SceneFrame } from "../../backend/WebGL2SceneUniforms";
+import { updateSceneFrameDescription } from "../../frame/SceneFrameDescription";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
 import { RENDER_CONSTANTS } from "../constants";
 
@@ -671,25 +673,44 @@ export function render(host: WebGLOsrsRendererHost, time: number, deltaTime: num
             manualFogDepth: host.fogDepth,
         });
 
-        // Update scene uniform buffer
+        // Build renderer-neutral CPU frame state, then let the active backend
+        // translate it into its own GPU representation.
         profiler.startPhase("sceneUbo");
         host.cameraPosUni[0] = camera.getPosX();
         host.cameraPosUni[1] = camera.getPosZ();
-        host.sceneUniformBuffer
-            .set(0, camera.viewProjMatrix as Float32Array)
-            .set(1, camera.viewMatrix as Float32Array)
-            .set(2, camera.projectionMatrix as Float32Array)
-            .set(3, host.skyColor as Float32Array)
-            .set(4, host.sceneHslOverride as Float32Array)
-            .set(5, host.cameraPosUni as Float32Array)
-            .set(6, host.playerPosUni as Float32Array)
-            .set(7, fogEnd as any)
-            .set(8, fogDepth as any)
-            .set(9, timeSec as any)
-            .set(10, host.brightness as any)
-            .set(11, host.colorBanding as any)
-            .set(12, host.osrsClient.isNewTextureAnim as any)
-            .update();
+        updateSceneFrameDescription(host.sceneFrameDescription, {
+            frameNumber: frameCount,
+            clientCycle,
+            clientTickPhase: host.clientTickPhase,
+            timeSeconds: timeSec,
+            deltaTimeMs: deltaTime,
+            canvasWidth: host.app.width,
+            canvasHeight: host.app.height,
+            sceneWidth: host.sceneRenderWidth,
+            sceneHeight: host.sceneRenderHeight,
+            sceneViewport,
+            sceneFramebufferViewport,
+            viewProjectionMatrix: camera.viewProjMatrix as Float32Array,
+            viewMatrix: camera.viewMatrix as Float32Array,
+            projectionMatrix: camera.projectionMatrix as Float32Array,
+            skyColor: host.skyColor as Float32Array,
+            sceneHslOverride: host.sceneHslOverride as Float32Array,
+            cameraX: host.cameraPosUni[0],
+            cameraZ: host.cameraPosUni[1],
+            playerX: host.playerPosUni[0],
+            playerZ: host.playerPosUni[1],
+            renderDistance,
+            fogEnd,
+            fogDepth,
+            brightness: host.brightness,
+            colorBanding: host.colorBanding,
+            newTextureAnimation: Number(host.osrsClient.isNewTextureAnim),
+            maxLevel: host.maxLevel,
+            roofPlaneLimit: host.roofPlaneLimit,
+            cullBackFace: host.cullBackFace,
+            scenePreview,
+        });
+        uploadWebGL2SceneFrame(host.sceneUniformBuffer, host.sceneFrameDescription);
         profiler.endPhase();
 
         // CPU-side interactions with latest camera
@@ -733,6 +754,7 @@ export function render(host: WebGLOsrsRendererHost, time: number, deltaTime: num
 
         profiler.startPhase("roof");
         host.roofPlaneLimit = host.computeFrameRoofPlaneLimit();
+        host.sceneFrameDescription.roofPlaneLimit = host.roofPlaneLimit;
         // The camera transform positions the scene within the full-window GL viewport;
         // scissoring also clips geometry that projects beyond the gameframe viewport.
         host.app.enable(PicoGL.SCISSOR_TEST).scissor(

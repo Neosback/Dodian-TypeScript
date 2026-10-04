@@ -187,6 +187,8 @@ import {
 } from "./shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "./water/WaterTextureIds";
 import type { GraphicsBackend } from "./backend/GraphicsBackend";
+import { createSceneFrameDescription } from "./frame/SceneFrameDescription";
+import type { SceneFrameDescription } from "./frame/SceneFrameDescription";
 
 import * as render from "./render";
 import { RENDER_CONSTANTS, TextureFilterMode, HD_SKY_COLOR_VEC4, HD_AUTO_FOG_DEPTH_FACTOR } from "./render/constants";
@@ -356,6 +358,10 @@ export class WebGLOsrsRenderer extends GameRenderer<WebGLMapSquare> {
     hoverLineProgram?: Program;
 
     public roofPlaneLimit?: number;
+
+    // Renderer-neutral CPU frame state. Backends upload/consume this without
+    // reaching back into game/client objects.
+    public sceneFrameDescription: SceneFrameDescription = createSceneFrameDescription();
 
     // Uniforms
     sceneUniformBuffer?: UniformBuffer;
