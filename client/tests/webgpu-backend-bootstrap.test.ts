@@ -53,6 +53,7 @@ async function main(): Promise<void> {
         lost,
         queue: {
             writeBuffer() {},
+            writeTexture() {},
             submit() {},
         },
         createShaderModule() {
