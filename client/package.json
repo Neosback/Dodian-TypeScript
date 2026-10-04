@@ -136,7 +136,7 @@
     "@types/react-modal": "^3.16.3",
     "@types/webfontloader": "^1.6.38",
     "basic-ftp": "^6.2.1",
-    "json-minimizer-webpack-plugin": "^5.1.0",
+    "json-minimizer-webpack-plugin": "^5.0.1",
     "path": "^0.12.7",
     "threads-plugin": "^1.4.0",
     "ts-shader-loader": "^2.1.0",
