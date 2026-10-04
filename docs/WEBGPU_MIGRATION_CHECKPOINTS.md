@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque foundation implemented; alpha/LOD/doors/animation still pending.
+Status: opaque, alpha, and map-level LOD parity implemented; mutable updates/doors/animation still pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -119,7 +119,13 @@ Status: opaque foundation implemented; alpha/LOD/doors/animation still pending.
 - Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
 - Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, and height contouring.
 - Reuse the terrain map/water bind group and the shared texture/material/water resources so loc fragment shading stays on the same material path.
-- Keep this slice intentionally limited to normal opaque static locs. Alpha locs, LOD selection, mutable loc-only updates, doors, world-entity transforms, and animated scenery remain separate checkpoints.
+- Build separate model-info storage/bind-group resources for opaque, alpha, LOD, and LOD-alpha loc batches, matching the existing WebGL model-info textures.
+- Mirror WebGL's map-level visibility policy in the A/B path: identical cull tile, render-distance skip, tile-distance LOD threshold, and visible-map ordering.
+- Select the same full-detail vs LOD terrain and loc batches for each map square instead of making independent backend-side distance decisions.
+- Render transparent locs immediately after transparent terrain for the same map while traversing visible maps in reverse order.
+- Use the shared `fsMainAlpha` cutoff path plus `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`, `less-equal` depth testing, and depth writes enabled for transparent loc parity.
+- Cache cull/no-cull variants for opaque and alpha loc pipelines rather than rebuilding pipeline state in the frame loop.
+- Remaining static-scene work includes mutable `locOnly` replacement, doors, world-entity transforms, and animated scenery updates.
 
 ### 4. Ordering, depth, culling, and picking
 
