@@ -112,6 +112,32 @@ assert.deepEqual(lodAlphaPlan.draws, [
 ]);
 assert.equal(lodAlphaPlan.modelInfoWords[0], 576 | (1 << 14));
 
+const hiddenModelData = new Uint16Array(8);
+hiddenModelData[0] = 1;
+hiddenModelData[4] = 704 | (1 << 14);
+hiddenModelData[5] = 768 | (1 << 14);
+hiddenModelData[6] = 1 | (2 << 6) | (8 << 8);
+hiddenModelData[7] = 123;
+const hiddenPlan = createWebGPUStaticLocPlanFromData(
+    hiddenModelData,
+    [[0, 0, 0]],
+    new Uint8Array([2]),
+);
+assert.deepEqual(hiddenPlan.draws, [
+    {
+        firstIndex: 0,
+        indexCount: 0,
+        instanceCount: 0,
+        firstInstance: 0,
+        plane: 2,
+    },
+]);
+assert.equal(
+    hiddenPlan.modelInfoWords[0],
+    704 | (1 << 14),
+    "hidden animation slots must retain their placement record",
+);
+
 const emptyPlan = createWebGPUStaticLocPlanFromData(
     new Uint16Array(0),
     [],
