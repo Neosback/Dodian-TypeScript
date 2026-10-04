@@ -111,13 +111,13 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable loc replacement, and doors implemented; animation/world-entity parity still pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, and animated loc draw-range parity implemented; world-entity parity still pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
 - Upload the existing four-plane signed height map as `r16sint`, with WebGPU row padding, and port the same two-diagonal contour interpolation used by GLSL.
 - Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
-- Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, and height contouring.
+- Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, brightness, and height contouring.
 - Reuse the terrain map/water bind group and the shared texture/material/water resources so loc fragment shading stays on the same material path.
 - Build separate model-info storage/bind-group resources for opaque, alpha, LOD, and LOD-alpha loc batches, matching the existing WebGL model-info textures.
 - Mirror WebGL's map-level visibility policy in the A/B path: identical cull tile, render-distance skip, tile-distance LOD threshold, and visible-map ordering.
@@ -131,8 +131,12 @@ Status: opaque, alpha, LOD, mutable loc replacement, and doors implemented; anim
 - Mirror valid `locOnly` and `doorOnly` updates only after WebGL commits the corresponding `MapManager.addMap`, rather than when a worker payload merely enters the queue.
 - Preserve FIFO ordering for multiple partial updates targeting the same map and discard queued partials when a full payload supersedes them.
 - Restore all queue/map observers during comparison disposal, device-loss fallback, or validation failure so the opt-in A/B path cannot leave hooks installed.
+- Mirror animated ordinary locs from each authoritative `WebGLMapSquare.locsAnimated` object after WebGL advances its sequence state, avoiding a second animation clock or random-start calculation in WebGPU.
+- Apply animated frames by mutating only WebGPU CPU draw metadata (index offset, index count, and instance count) for the selected full-detail/LOD opaque and alpha passes; static vertex/index/model-info GPU buffers are not rewritten per frame.
+- Preserve model placement, roof-plane metadata, and initially hidden animation slots while draw counts change; zero-count slots retain their model records so later frames can reactivate them.
+- `locOnly` replacement naturally swaps both the ordinary WebGPU loc resource and the WebGL animation source used by the comparison on the next frame.
 - Loc and door resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Remaining static-scene work includes world-entity transforms, animated scenery updates, ground-item parity, and the dedicated wall/decor depth/order rules.
+- Remaining static-scene work includes world-entity transforms, ground-item parity, and the dedicated wall/decor depth/order rules.
 
 ### 4. Ordering, depth, culling, and picking
 
@@ -144,7 +148,7 @@ Carry over face priorities, wall/decor depth rules, back-face culling, chunk cul
 
 Status: pending.
 
-Port animated locs, players, NPCs, projectiles, spot animations, and interaction highlights.
+Animated ordinary loc draw-range parity is already handled in 3C. Remaining dynamic-scene work includes players, NPCs, projectiles, spot animations, skinned/other dynamic scenery, and interaction highlights.
 
 ### 6. 2D/UI
 
