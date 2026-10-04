@@ -6,7 +6,6 @@ import {
     type WebGPUBindGroupLike,
     type WebGPUBufferLike,
     type WebGPUDeviceLike,
-    type WebGPUTextureLike,
 } from "../../backend/WebGPUPlatform";
 import { WebGPUWaterMaskResources } from "./WebGPUWaterMaskResources";
 
@@ -24,6 +23,8 @@ export interface WebGPUTerrainDrawPlan {
     renderPosY: number;
     draws: WebGPUTerrainDrawPlanEntry[];
     alphaDraws: WebGPUTerrainDrawPlanEntry[];
+    lodDraws: WebGPUTerrainDrawPlanEntry[];
+    lodAlphaDraws: WebGPUTerrainDrawPlanEntry[];
 }
 
 export type WebGPUTerrainUploadData = Pick<
@@ -40,7 +41,17 @@ export type WebGPUTerrainUploadData = Pick<
     | "heightMapSize"
     | "waterMaskTextureData"
 > &
-    Partial<Pick<SdMapData, "drawRangesAlpha" | "drawRangesAlphaPlanes">>;
+    Partial<
+        Pick<
+            SdMapData,
+            | "drawRangesAlpha"
+            | "drawRangesAlphaPlanes"
+            | "drawRangesLod"
+            | "drawRangesLodPlanes"
+            | "drawRangesLodAlpha"
+            | "drawRangesLodAlphaPlanes"
+        >
+    >;
 
 function appendDrawPlan(
     output: WebGPUTerrainDrawPlanEntry[],
@@ -73,12 +84,24 @@ export function createWebGPUTerrainDrawPlan(
 ): WebGPUTerrainDrawPlan {
     const draws: WebGPUTerrainDrawPlanEntry[] = [];
     const alphaDraws: WebGPUTerrainDrawPlanEntry[] = [];
+    const lodDraws: WebGPUTerrainDrawPlanEntry[] = [];
+    const lodAlphaDraws: WebGPUTerrainDrawPlanEntry[] = [];
 
     appendDrawPlan(draws, data.drawRanges, data.drawRangesPlanes);
     appendDrawPlan(
         alphaDraws,
         data.drawRangesAlpha ?? [],
         data.drawRangesAlphaPlanes,
+    );
+    appendDrawPlan(
+        lodDraws,
+        data.drawRangesLod ?? [],
+        data.drawRangesLodPlanes,
+    );
+    appendDrawPlan(
+        lodAlphaDraws,
+        data.drawRangesLodAlpha ?? [],
+        data.drawRangesLodAlphaPlanes,
     );
 
     return {
@@ -88,6 +111,8 @@ export function createWebGPUTerrainDrawPlan(
         renderPosY: data.renderPosY ?? data.mapY,
         draws,
         alphaDraws,
+        lodDraws,
+        lodAlphaDraws,
     };
 }
 
@@ -126,6 +151,8 @@ export class WebGPUTerrainMapResources {
     readonly sharedMapBindGroup: WebGPUBindGroupLike;
     readonly draws: WebGPUTerrainDrawResources[];
     readonly alphaDraws: WebGPUTerrainDrawResources[];
+    readonly lodDraws: WebGPUTerrainDrawResources[];
+    readonly lodAlphaDraws: WebGPUTerrainDrawResources[];
 
     constructor(
         private readonly device: WebGPUDeviceLike,
@@ -221,6 +248,11 @@ export class WebGPUTerrainMapResources {
 
         this.draws = createDrawResources(this.plan.draws, "opaque");
         this.alphaDraws = createDrawResources(this.plan.alphaDraws, "alpha");
+        this.lodDraws = createDrawResources(this.plan.lodDraws, "lod-opaque");
+        this.lodAlphaDraws = createDrawResources(
+            this.plan.lodAlphaDraws,
+            "lod-alpha",
+        );
     }
 
     dispose(): void {
@@ -228,13 +260,16 @@ export class WebGPUTerrainMapResources {
         this.indexBuffer.destroy?.();
         this.waterMask.dispose();
         this.sharedMapUniformBuffer.destroy?.();
-        for (const draw of this.draws) {
-            draw.mapUniformBuffer.destroy?.();
+        for (const draws of [
+            this.draws,
+            this.alphaDraws,
+            this.lodDraws,
+            this.lodAlphaDraws,
+        ]) {
+            for (const draw of draws) {
+                draw.mapUniformBuffer.destroy?.();
+            }
+            draws.length = 0;
         }
-        for (const draw of this.alphaDraws) {
-            draw.mapUniformBuffer.destroy?.();
-        }
-        this.draws.length = 0;
-        this.alphaDraws.length = 0;
     }
 }
