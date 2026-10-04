@@ -11,6 +11,8 @@ import {
     type WebGPURenderPipelineLike,
     type WebGPUTextureLike,
 } from "../backend/WebGPUPlatform";
+import { getGroundItemGeometrySnapshot } from "../ground/GroundItemGeometrySnapshot";
+import type { GroundItemGeometryBuildData } from "../ground/GroundItemMeshBuilder";
 import type { WebGPUTerrainUploadData } from "./terrain/WebGPUTerrainMapResources";
 import { WebGPUTerrainMapResources } from "./terrain/WebGPUTerrainMapResources";
 import { WEBGPU_TERRAIN_SHADER } from "./terrain/WebGPUTerrainShader";
@@ -21,6 +23,7 @@ import {
 import { WebGPUSceneUniformBuffer } from "./WebGPUSceneUniforms";
 import { WebGPUWaterResources } from "./terrain/WebGPUWaterResources";
 import { WebGPUStaticDoorResources } from "./loc/WebGPUStaticDoorResources";
+import { WebGPUStaticGroundItemResources } from "./ground/WebGPUStaticGroundItemResources";
 import {
     type WebGPUStaticLocPassResources,
     WebGPUStaticLocResources,
@@ -40,6 +43,13 @@ export function getWebGPUTerrainPipelineVariant(
         return cullBackFace ? "alpha-cull" : "alpha-no-cull";
     }
     return cullBackFace ? "opaque-cull" : "opaque-no-cull";
+}
+
+interface GroundItemSnapshotMap {
+    mapX: number;
+    mapY: number;
+    heightMapSize?: number;
+    heightMapData?: Int16Array;
 }
 
 export class WebGPUStaticSceneRenderer {
@@ -66,6 +76,8 @@ export class WebGPUStaticSceneRenderer {
     private depthHeight = 0;
     private mapsById = new Map<number, WebGPUTerrainMapResources>();
     private locsById = new Map<number, WebGPUStaticLocResources>();
+    private groundItemsById = new Map<number, WebGPUStaticGroundItemResources>();
+    private groundItemRevisionById = new Map<number, number>();
     private doorsById = new Map<number, WebGPUStaticDoorResources>();
     private mapOrder: number[] = [];
     private visibleMapOrder: number[] = [];
@@ -494,6 +506,44 @@ export class WebGPUStaticSceneRenderer {
         return true;
     }
 
+    replaceGroundItemGeometry(
+        mapX: number,
+        mapY: number,
+        heightMapSize: number,
+        heightMapTextureData: Int16Array,
+        data: GroundItemGeometryBuildData | undefined,
+    ): boolean {
+        const id = this.mapId(mapX, mapY);
+        if (!this.mapsById.has(id)) {
+            return false;
+        }
+        const device = this.device;
+        const locBindGroupLayout = this.locBindGroupLayout;
+        if (!device || !locBindGroupLayout) {
+            throw new Error("WebGPU static scene renderer is not initialized");
+        }
+
+        this.groundItemsById.get(id)?.dispose();
+        this.groundItemsById.delete(id);
+        if (!data || data.vertices.length === 0 || data.indices.length === 0) {
+            return true;
+        }
+
+        this.groundItemsById.set(
+            id,
+            new WebGPUStaticGroundItemResources(
+                device,
+                locBindGroupLayout,
+                mapX,
+                mapY,
+                heightMapSize,
+                heightMapTextureData,
+                data,
+            ),
+        );
+        return true;
+    }
+
     replaceDoorGeometry(data: SdMapData): boolean {
         const id = this.mapId(data.mapX, data.mapY);
         if (!this.mapsById.has(id)) {
@@ -580,8 +630,11 @@ export class WebGPUStaticSceneRenderer {
         const id = this.mapId(mapX, mapY);
         this.mapsById.get(id)?.dispose();
         this.locsById.get(id)?.dispose();
+        this.groundItemsById.get(id)?.dispose();
         this.doorsById.get(id)?.dispose();
         this.locsById.delete(id);
+        this.groundItemsById.delete(id);
+        this.groundItemRevisionById.delete(id);
         this.doorsById.delete(id);
         if (this.mapsById.delete(id)) {
             const index = this.mapOrder.indexOf(id);
@@ -600,6 +653,11 @@ export class WebGPUStaticSceneRenderer {
             locs.dispose();
         }
         this.locsById.clear();
+        for (const groundItems of this.groundItemsById.values()) {
+            groundItems.dispose();
+        }
+        this.groundItemsById.clear();
+        this.groundItemRevisionById.clear();
         for (const doors of this.doorsById.values()) {
             doors.dispose();
         }
@@ -617,7 +675,7 @@ export class WebGPUStaticSceneRenderer {
     }
 
     setVisibleSceneMaps(
-        maps: readonly { mapX: number; mapY: number }[],
+        maps: readonly GroundItemSnapshotMap[],
         lodFlags: readonly number[],
         count: number,
     ): void {
@@ -627,8 +685,29 @@ export class WebGPUStaticSceneRenderer {
         this.visibleMapLod.length = limit;
         for (let i = 0; i < limit; i++) {
             const map = maps[i];
-            this.visibleMapOrder[i] = this.mapId(map.mapX, map.mapY);
+            const id = this.mapId(map.mapX, map.mapY);
+            this.visibleMapOrder[i] = id;
             this.visibleMapLod[i] = lodFlags[i] ? 1 : 0;
+
+            const snapshot = getGroundItemGeometrySnapshot(map as object);
+            if (
+                snapshot &&
+                this.groundItemRevisionById.get(id) !== snapshot.revision &&
+                typeof map.heightMapSize === "number" &&
+                map.heightMapData
+            ) {
+                if (
+                    this.replaceGroundItemGeometry(
+                        map.mapX,
+                        map.mapY,
+                        map.heightMapSize,
+                        map.heightMapData,
+                        snapshot.data,
+                    )
+                ) {
+                    this.groundItemRevisionById.set(id, snapshot.revision);
+                }
+            }
         }
     }
 
@@ -708,6 +787,15 @@ export class WebGPUStaticSceneRenderer {
                 locs?.getPass(false, lod),
                 locPipeline,
             );
+            const groundItems = this.groundItemsById.get(id);
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                groundItems,
+                groundItems?.getPass(false, lod),
+                locPipeline,
+            );
             const doors = this.doorsById.get(id);
             this.drawStaticGeometry(
                 pass,
@@ -760,6 +848,15 @@ export class WebGPUStaticSceneRenderer {
                 map,
                 locs,
                 locs?.getPass(true, lod),
+                locPipeline,
+            );
+            const groundItems = this.groundItemsById.get(id);
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                groundItems,
+                groundItems?.getPass(true, lod),
                 locPipeline,
             );
             const doors = this.doorsById.get(id);
@@ -906,6 +1003,8 @@ export class WebGPUStaticSceneRenderer {
         this.mapOrder.length = 0;
         this.mapsById.clear();
         this.locsById.clear();
+        this.groundItemsById.clear();
+        this.groundItemRevisionById.clear();
         this.doorsById.clear();
     }
 }
