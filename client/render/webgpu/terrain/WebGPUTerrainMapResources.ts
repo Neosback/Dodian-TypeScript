@@ -9,6 +9,27 @@ import {
 } from "../../backend/WebGPUPlatform";
 import { WebGPUWaterMaskResources } from "./WebGPUWaterMaskResources";
 
+export const WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET = 8;
+export const WEBGPU_MAP_UNIFORM_TRANSFORM_BYTE_OFFSET =
+    WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET * 4;
+export const WEBGPU_MAP_UNIFORM_FLOATS = 24;
+
+const IDENTITY_WORLD_ENTITY_TRANSFORM = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+]);
+
+const TERRAIN_RESOURCES_BY_DEVICE = new WeakMap<
+    object,
+    Map<number, WebGPUTerrainMapResources>
+>();
+
+function terrainResourceMapId(mapX: number, mapY: number): number {
+    return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
+}
+
 export interface WebGPUTerrainDrawPlanEntry {
     firstIndex: number;
     indexCount: number;
@@ -116,6 +137,23 @@ export function createWebGPUTerrainDrawPlan(
     };
 }
 
+export function createWebGPUMapUniformData(
+    mapX: number,
+    mapY: number,
+    plane: number,
+    loadTime: number,
+    borderSize: number,
+): Float32Array {
+    const data = new Float32Array(WEBGPU_MAP_UNIFORM_FLOATS);
+    data[0] = mapX;
+    data[1] = mapY;
+    data[2] = plane;
+    data[3] = loadTime;
+    data[4] = borderSize;
+    data.set(IDENTITY_WORLD_ENTITY_TRANSFORM, WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET);
+    return data;
+}
+
 function alignedBufferSize(byteLength: number): number {
     return Math.max(4, (byteLength + 3) & ~3);
 }
@@ -142,6 +180,21 @@ export interface WebGPUTerrainDrawResources extends WebGPUTerrainDrawPlanEntry {
     mapBindGroup: WebGPUBindGroupLike;
 }
 
+export function syncWebGPUWorldEntityTransformForMap(
+    device: WebGPUDeviceLike | undefined,
+    mapX: number,
+    mapY: number,
+    transform: Float32Array,
+): boolean {
+    if (!device || transform.length < 16) {
+        return false;
+    }
+    const resources = TERRAIN_RESOURCES_BY_DEVICE
+        .get(device as object)
+        ?.get(terrainResourceMapId(mapX, mapY));
+    return resources?.updateWorldEntityTransform(transform) ?? false;
+}
+
 export class WebGPUTerrainMapResources {
     readonly plan: WebGPUTerrainDrawPlan;
     readonly vertexBuffer: WebGPUBufferLike;
@@ -154,6 +207,11 @@ export class WebGPUTerrainMapResources {
     readonly lodDraws: WebGPUTerrainDrawResources[];
     readonly lodAlphaDraws: WebGPUTerrainDrawResources[];
 
+    private readonly worldEntityTransform = new Float32Array(
+        IDENTITY_WORLD_ENTITY_TRANSFORM,
+    );
+    private readonly registryMapId: number;
+
     constructor(
         private readonly device: WebGPUDeviceLike,
         mapBindGroupLayout: WebGPUBindGroupLayoutLike,
@@ -161,6 +219,7 @@ export class WebGPUTerrainMapResources {
         loadTime: number,
     ) {
         this.plan = createWebGPUTerrainDrawPlan(data);
+        this.registryMapId = terrainResourceMapId(this.plan.mapX, this.plan.mapY);
 
         this.vertexBuffer = createUploadedBuffer(
             device,
@@ -184,16 +243,13 @@ export class WebGPUTerrainMapResources {
             baseArrayLayer: 0,
             arrayLayerCount: 4,
         });
-        const sharedMapUniformData = new Float32Array([
+        const sharedMapUniformData = createWebGPUMapUniformData(
             this.plan.renderPosX,
             this.plan.renderPosY,
             0,
             loadTime,
             data.borderSize,
-            0,
-            0,
-            0,
-        ]);
+        );
         this.sharedMapUniformBuffer = createUploadedBuffer(
             device,
             `terrain-${this.plan.mapX}-${this.plan.mapY}-shared-map-uniforms`,
@@ -214,16 +270,13 @@ export class WebGPUTerrainMapResources {
             passLabel: string,
         ): WebGPUTerrainDrawResources[] =>
             draws.map((draw, index) => {
-                const uniformData = new Float32Array([
+                const uniformData = createWebGPUMapUniformData(
                     this.plan.renderPosX,
                     this.plan.renderPosY,
                     draw.plane,
                     loadTime,
                     data.borderSize,
-                    0,
-                    0,
-                    0,
-                ]);
+                );
                 const mapUniformBuffer = createUploadedBuffer(
                     device,
                     `terrain-${this.plan.mapX}-${this.plan.mapY}-${passLabel}-draw-${index}-uniforms`,
@@ -253,9 +306,55 @@ export class WebGPUTerrainMapResources {
             this.plan.lodAlphaDraws,
             "lod-alpha",
         );
+
+        let registry = TERRAIN_RESOURCES_BY_DEVICE.get(device as object);
+        if (!registry) {
+            registry = new Map();
+            TERRAIN_RESOURCES_BY_DEVICE.set(device as object, registry);
+        }
+        registry.set(this.registryMapId, this);
+    }
+
+    updateWorldEntityTransform(transform: Float32Array): boolean {
+        let changed = false;
+        for (let i = 0; i < 16; i++) {
+            const value = transform[i];
+            if (this.worldEntityTransform[i] !== value) {
+                changed = true;
+            }
+            this.worldEntityTransform[i] = value;
+        }
+        if (!changed) {
+            return false;
+        }
+
+        const writeTransform = (buffer: WebGPUBufferLike) => {
+            this.device.queue.writeBuffer(
+                buffer,
+                WEBGPU_MAP_UNIFORM_TRANSFORM_BYTE_OFFSET,
+                this.worldEntityTransform,
+            );
+        };
+        writeTransform(this.sharedMapUniformBuffer);
+        for (const draws of [
+            this.draws,
+            this.alphaDraws,
+            this.lodDraws,
+            this.lodAlphaDraws,
+        ]) {
+            for (const draw of draws) {
+                writeTransform(draw.mapUniformBuffer);
+            }
+        }
+        return true;
     }
 
     dispose(): void {
+        const registry = TERRAIN_RESOURCES_BY_DEVICE.get(this.device as object);
+        if (registry?.get(this.registryMapId) === this) {
+            registry.delete(this.registryMapId);
+        }
+
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
         this.waterMask.dispose();
