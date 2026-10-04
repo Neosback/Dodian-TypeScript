@@ -1,0 +1,40 @@
+[
+  {
+    "id": 50000,
+    "baseItemId": 4587,
+    "objType": {
+      "name": "Dragonic katana",
+      "examine": "A custom katana forged in the shape of a dragon.",
+      "model": 1000000,
+      "maleModel": 1000001,
+      "femaleModel": 1000001,
+      "maleModel1": -1,
+      "maleModel2": -1,
+      "femaleModel1": -1,
+      "femaleModel2": -1,
+      "zoom2d": 1800,
+      "xan2d": 512,
+      "yan2d": 0,
+      "zan2d": 0,
+      "offsetX2d": 0,
+      "offsetY2d": 0,
+      "recolorFrom": [],
+      "recolorTo": [],
+      "retextureFrom": [],
+      "retextureTo": [],
+      "inventoryActions": ["Wield", null, null, null, "Drop"],
+      "isTradable": false,
+      "note": -1,
+      "noteTemplate": -1,
+      "unnotedId": -1,
+      "notedId": -1,
+      "placeholder": -1,
+      "placeholderTemplate": -1
+    },
+    "itemDef": { "tradeable": false },
+    "models": {
+      "1000000": "dragonic-katana/drop.dat",
+      "1000001": "dragonic-katana/equip.dat"
+    }
+  }
+]

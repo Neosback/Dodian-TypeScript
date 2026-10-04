@@ -1,0 +1,12 @@
+---
+description: Do not start local game servers or use Cursor browser for playtesting
+alwaysApply: true
+---
+
+# Local Runtime
+
+- Do **not** start the game server (`yarn server:start`, `tsx server/src/index.ts`, systemd restarts for casual testing) unless the user explicitly asks.
+- Do **not** start the client dev server (`yarn start`, `craco start`) unless the user explicitly asks.
+- The user already runs the server themselves and plays in an **external browser**. Prefer that; do not open or drive the Cursor IDE browser for gameplay verification unless they ask.
+- When verifying production, prefer `curl`/CLI checks, Vercel CLI, or SSH logs. Only use browser tools if the user requests visual verification.
+- Deploying to Vercel or the VPS is fine when asked; that is not the same as starting a local Cursor-managed server.

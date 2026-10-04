@@ -1,0 +1,28 @@
+[Unit]
+Description=Elvarg Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/elvarg-web-server
+Environment=NODE_ENV=production
+Environment=PORT=49598
+ExecStart=/usr/bin/env yarn start:prod
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# Keep the main game loop responsive without letting one process consume the whole box.
+Nice=-5
+LimitNOFILE=65535
+
+# stdout/stderr land in journald; the server still writes its own log files too.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=elvarg-web-server
+
+[Install]
+WantedBy=multi-user.target

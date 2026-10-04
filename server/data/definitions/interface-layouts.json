@@ -1,0 +1,208 @@
+{
+  "combat-tab": {
+    "id": 2423,
+    "name": "Combat options",
+    "surface": "sidebar",
+    "tabId": 0
+  },
+  "skills-tab": {
+    "id": 3917,
+    "name": "Skills",
+    "surface": "sidebar",
+    "tabId": 1
+  },
+  "quests-tab": {
+    "id": 629,
+    "name": "Quests",
+    "surface": "sidebar",
+    "tabId": 2
+  },
+  "inventory-tab": {
+    "id": 3213,
+    "name": "Inventory",
+    "surface": "sidebar",
+    "tabId": 3
+  },
+  "equipment-tab": {
+    "id": 1644,
+    "name": "Equipment",
+    "surface": "sidebar",
+    "tabId": 4
+  },
+  "prayer-tab": {
+    "id": 5608,
+    "name": "Prayer",
+    "surface": "sidebar",
+    "tabId": 5
+  },
+  "clan-chat-tab": {
+    "id": 37128,
+    "name": "Clan chat",
+    "surface": "sidebar",
+    "tabId": 7
+  },
+  "friends-tab": {
+    "id": 5065,
+    "name": "Friends list",
+    "surface": "sidebar",
+    "tabId": 8
+  },
+  "ignore-tab": {
+    "id": 5715,
+    "name": "Ignore list",
+    "surface": "sidebar",
+    "tabId": 9
+  },
+  "logout-tab": {
+    "id": 2449,
+    "name": "Logout",
+    "surface": "sidebar",
+    "tabId": 10
+  },
+  "settings-tab": {
+    "id": 42500,
+    "name": "Settings",
+    "surface": "sidebar",
+    "tabId": 11
+  },
+  "emotes-tab": {
+    "id": 147,
+    "name": "Emotes",
+    "surface": "sidebar",
+    "tabId": 12
+  },
+  "music-tab": {
+    "id": 32000,
+    "name": "Music",
+    "surface": "sidebar",
+    "tabId": 13
+  },
+  "bank": {
+    "id": 5292,
+    "name": "Bank",
+    "surface": "main-with-sidebar",
+    "sidebarInterfaceId": 5063
+  },
+  "trade-offer": {
+    "id": 3323,
+    "name": "Trade offer",
+    "surface": "main-with-sidebar",
+    "sidebarInterfaceId": 3321
+  },
+  "trade-confirm": {
+    "id": 3443,
+    "name": "Trade confirmation",
+    "surface": "main-with-sidebar",
+    "sidebarInterfaceId": 3321
+  },
+  "duel-offer": {
+    "id": 755,
+    "name": "Duel options",
+    "surface": "main"
+  },
+  "duel-confirm": {
+    "id": 756,
+    "name": "Confirm duel options",
+    "surface": "main"
+  },
+  "equipment-bonuses": {
+    "id": 15106,
+    "name": "Equipment bonuses",
+    "surface": "main"
+  },
+  "wilderness-overlay": {
+    "id": 197,
+    "name": "Wilderness level",
+    "surface": "walkable-overlay"
+  },
+  "statement-1-line": {
+    "id": 356,
+    "name": "Statement dialogue (1 line)",
+    "surface": "chatbox"
+  },
+  "statement-2-lines": {
+    "id": 359,
+    "name": "Statement dialogue (2 lines)",
+    "surface": "chatbox"
+  },
+  "statement-3-lines": {
+    "id": 363,
+    "name": "Statement dialogue (3 lines)",
+    "surface": "chatbox"
+  },
+  "statement-4-lines": {
+    "id": 368,
+    "name": "Statement dialogue (4 lines)",
+    "surface": "chatbox"
+  },
+  "statement-5-lines": {
+    "id": 374,
+    "name": "Statement dialogue (5 lines)",
+    "surface": "chatbox"
+  },
+  "options-1": {
+    "id": 13758,
+    "name": "Options dialogue (1 option)",
+    "surface": "chatbox"
+  },
+  "options-2": {
+    "id": 2459,
+    "name": "Options dialogue (2 options)",
+    "surface": "chatbox"
+  },
+  "options-3": {
+    "id": 2469,
+    "name": "Options dialogue (3 options)",
+    "surface": "chatbox"
+  },
+  "options-4": {
+    "id": 2480,
+    "name": "Options dialogue (4 options)",
+    "surface": "chatbox"
+  },
+  "options-5": {
+    "id": 2492,
+    "name": "Options dialogue (5 options)",
+    "surface": "chatbox"
+  },
+  "player-dialogue-1-line": {
+    "id": 968,
+    "name": "Player dialogue (1 line)",
+    "surface": "chatbox"
+  },
+  "player-dialogue-2-lines": {
+    "id": 973,
+    "name": "Player dialogue (2 lines)",
+    "surface": "chatbox"
+  },
+  "player-dialogue-3-lines": {
+    "id": 979,
+    "name": "Player dialogue (3 lines)",
+    "surface": "chatbox"
+  },
+  "player-dialogue-4-lines": {
+    "id": 986,
+    "name": "Player dialogue (4 lines)",
+    "surface": "chatbox"
+  },
+  "npc-dialogue-1-line": {
+    "id": 4882,
+    "name": "NPC dialogue (1 line)",
+    "surface": "chatbox"
+  },
+  "npc-dialogue-2-lines": {
+    "id": 4887,
+    "name": "NPC dialogue (2 lines)",
+    "surface": "chatbox"
+  },
+  "npc-dialogue-3-lines": {
+    "id": 4893,
+    "name": "NPC dialogue (3 lines)",
+    "surface": "chatbox"
+  },
+  "npc-dialogue-4-lines": {
+    "id": 4900,
+    "name": "NPC dialogue (4 lines)",
+    "surface": "chatbox"
+  }
+}

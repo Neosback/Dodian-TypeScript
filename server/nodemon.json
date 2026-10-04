@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "data/saves/**",
+    "plugins/world/data/**",
+    "plugins/bots/data/**",
+    "data/npc-spawns*.json",
+    "data/definitions/npc-spawns*.json",
+    "data/definitions/npc-combat-defs.json"
+  ]
+}

@@ -1,0 +1,229 @@
+import { ArchiveVarBitTypeLoader } from "./codec/rs/config/vartype/bit/VarBitTypeLoader";
+import type { VarManager } from "./codec/rs/config/vartype/VarManager";
+import { CacheIndexDat2 } from "./codec/rs/cache/CacheIndex";
+import type { CacheInfo } from "./codec/rs/cache/CacheInfo";
+import { ConfigType } from "./codec/rs/cache/ConfigType";
+import { IndexType } from "./codec/rs/cache/IndexType";
+import { ArchiveLocTypeLoader } from "./codec/rs/config/loctype/LocTypeLoader";
+import type { LocType } from "./codec/rs/config/loctype/LocType";
+import { ArchiveNpcTypeLoader } from "./codec/rs/config/npctype/NpcTypeLoader";
+import type { NpcType } from "./codec/rs/config/npctype/NpcType";
+import {
+    ArchiveObjTypeLoader,
+    PostProcessedObjTypeLoader,
+} from "./codec/rs/config/objtype/ObjTypeLoader";
+import { CachePipeline } from "./CachePipeline";
+import { ObjType } from "./codec/rs/config/objtype/ObjType";
+
+export interface ServerCustomItem {
+    id: number;
+    baseItemId?: number;
+    objType: Record<string, unknown>;
+    itemDef?: Record<string, unknown>;
+    models?: Record<string, string>;
+}
+
+export class CacheDefinitions {
+    private static readonly SPELL_WIDGET_PARAM_ID = 596;
+    private static readonly SPELL_NAME_PARAM_ID = 601;
+    private static spellNamesByWidget?: Map<number, string>;
+    private static state?: {
+        npcs: ArchiveNpcTypeLoader;
+        varbits: ArchiveVarBitTypeLoader;
+        items: PostProcessedObjTypeLoader;
+        objects: ArchiveLocTypeLoader;
+        info: CacheInfo;
+    };
+    private static customItems = new Map<number, ServerCustomItem>();
+    private static customItemTypes = new Map<number, ObjType>();
+    private static customModels?: Array<{ id: number; data: string }>;
+
+    private static getState() {
+        if (this.state) return this.state;
+
+        const active = CachePipeline.getActive();
+        const info: CacheInfo = {
+            name: active.name,
+            game: "oldschool",
+            environment: "live",
+            revision: active.revision,
+            timestamp: active.timestamp,
+            size: 0,
+        };
+        const store = CachePipeline.getStore();
+        const configs = CacheIndexDat2.fromStore(IndexType.DAT2.configs, store);
+        this.state = {
+            varbits: new ArchiveVarBitTypeLoader(info, configs.getArchive(ConfigType.DAT2.varbits)),
+            npcs: new ArchiveNpcTypeLoader(info, configs.getArchive(ConfigType.DAT2.npcs)),
+            items: new PostProcessedObjTypeLoader(
+                new ArchiveObjTypeLoader(info, configs.getArchive(ConfigType.DAT2.objs)),
+            ),
+            objects: new ArchiveLocTypeLoader(info, configs.getArchive(ConfigType.DAT2.locs)),
+            info,
+        };
+        console.info(
+            `[cache] definitions npc=${this.state.npcs.getCount()} item=${this.state.items.getCount()} object=${this.state.objects.getCount()}`,
+        );
+        return this.state;
+    }
+
+    static getNpc(id: number): NpcType {
+        return this.getState().npcs.load(id);
+    }
+
+    static getVarbit(id: number) {
+        return this.getState().varbits.load(id);
+    }
+
+    static resolveNpc(id: number, vars: Pick<VarManager, "getVarp" | "getVarbit">): NpcType | undefined {
+        let npc = this.getNpc(id);
+        const seen = new Set<number>();
+        while (npc?.transforms) {
+            if (seen.has(npc.id)) return undefined;
+            seen.add(npc.id);
+            npc = npc.transform(vars, this.getState().npcs);
+        }
+        return npc;
+    }
+
+    static getItem(id: number): ObjType {
+        const custom = this.customItemTypes.get(id);
+        if (custom) return custom;
+        return this.getState().items.load(id);
+    }
+
+    static hasItem(id: number): boolean {
+        if (!Number.isInteger(id) || id <= 0) return false;
+        if (this.customItems.has(id)) return true;
+        if (id >= this.getCounts().items) return false;
+        const item = this.getItem(id);
+        return Boolean(item?.name && item.name !== "null");
+    }
+
+    static registerCustomItems(rows: unknown[]): void {
+        const state = this.getState();
+        const items = new Map<number, ServerCustomItem>();
+        const types = new Map<number, ObjType>();
+        const modelIds = new Set<number>();
+        for (const row of rows) {
+            if (!row || typeof row !== "object") throw new Error("[custom-items] each row must be an object");
+            const raw = row as Record<string, unknown>;
+            const id = raw.id as number;
+            if (!Number.isInteger(id) || id < 50000 || id < state.items.getCount() || id > 65022) {
+                throw new Error(`[custom-items] id must be in 50000..65022: ${String(id)}`);
+            }
+            if (items.has(id)) throw new Error(`[custom-items] duplicate item id: ${id}`);
+            const objProps = raw.objType;
+            if (!objProps || typeof objProps !== "object") {
+                throw new Error(`[custom-items] ${id} is missing objType`);
+            }
+            if (typeof (objProps as any).name !== "string" || !(objProps as any).name.trim()) {
+                throw new Error(`[custom-items] ${id} is missing objType.name`);
+            }
+            if (raw.baseItemId !== undefined && !Number.isInteger(raw.baseItemId)) {
+                throw new Error(`[custom-items] ${id} has invalid baseItemId`);
+            }
+            const baseItemId = raw.baseItemId as number | undefined;
+            if (baseItemId != null && (baseItemId < 0 || baseItemId >= state.items.getCount() || state.items.load(baseItemId).name === "null")) {
+                throw new Error(`[custom-items] ${id} has invalid baseItemId: ${baseItemId}`);
+            }
+            const item: ServerCustomItem = {
+                id,
+                baseItemId,
+                objType: objProps as Record<string, unknown>,
+                itemDef: raw.itemDef && typeof raw.itemDef === "object" ? raw.itemDef as Record<string, unknown> : undefined,
+                models: raw.models && typeof raw.models === "object" ? raw.models as Record<string, string> : undefined,
+            };
+            for (const rawModelId of Object.keys(item.models ?? {})) {
+                const modelId = Number(rawModelId);
+                if (!Number.isInteger(modelId) || modelId < 1000000 || modelId > 0x7fffffff || modelIds.has(modelId)) {
+                    throw new Error(`[custom-items] invalid or duplicate model id: ${rawModelId}`);
+                }
+                modelIds.add(modelId);
+            }
+            const base = item.baseItemId != null ? state.items.load(item.baseItemId) : undefined;
+            const type = new ObjType(id, state.info);
+            if (base) {
+                Object.assign(type, base);
+                for (const [key, value] of Object.entries(base)) {
+                    if (Array.isArray(value)) (type as any)[key] = [...value];
+                }
+            }
+            for (const [key, value] of Object.entries(item.objType)) {
+                if (["id", "cacheInfo", "cacheType", "__proto__", "constructor", "prototype"].includes(key) ||
+                    typeof (type as any)[key] === "function") {
+                    throw new Error(`[custom-items] ${id} has invalid objType property: ${key}`);
+                }
+                const existing = (type as any)[key];
+                if ((typeof existing === "number" || key === "model") && !Number.isFinite(value) ||
+                    typeof existing === "boolean" && typeof value !== "boolean" ||
+                    ["name", "examine"].includes(key) && typeof value !== "string") {
+                    throw new Error(`[custom-items] ${id} has invalid objType.${key}`);
+                }
+                if (["groundActions", "inventoryActions"].includes(key) &&
+                    (!Array.isArray(value) || value.length !== 5 || !value.every((action) => action === null || typeof action === "string"))) {
+                    throw new Error(`[custom-items] ${id} requires five ${key} entries`);
+                }
+                if (["recolorFrom", "recolorTo", "retextureFrom", "retextureTo"].includes(key) &&
+                    (!Array.isArray(value) || !value.every(Number.isInteger))) {
+                    throw new Error(`[custom-items] ${id} has invalid ${key}`);
+                }
+            }
+            Object.assign(type, item.objType);
+            Object.assign(type, { id });
+            for (const [from, to] of [[type.recolorFrom, type.recolorTo], [type.retextureFrom, type.retextureTo]]) {
+                if ((from?.length ?? 0) !== (to?.length ?? 0)) throw new Error(`[custom-items] ${id} has mismatched recolour/retexture arrays`);
+            }
+            if (!Array.isArray(type.inventoryActions)) type.inventoryActions = [null, null, null, null, "Drop"];
+            items.set(id, item);
+            types.set(id, type);
+        }
+        this.customItems = items;
+        this.customItemTypes = types;
+        this.customModels = [];
+    }
+
+    static getCustomItems(): ServerCustomItem[] {
+        return [...this.customItems.values()];
+    }
+
+    static setCustomModels(models: Array<{ id: number; data: string }>): void {
+        this.customModels = models;
+    }
+
+    static getCustomModels(): Array<{ id: number; data: string }> {
+        return this.customModels ?? [];
+    }
+
+    static getObject(id: number): LocType {
+        return this.getState().objects.load(id);
+    }
+
+    static getCounts(): { npcs: number; items: number; objects: number } {
+        const state = this.getState();
+        return {
+            npcs: state.npcs.getCount(),
+            items: state.items.getCount(),
+            objects: state.objects.getCount(),
+        };
+    }
+
+    static getSpellName(widgetId: number, itemId: number): string | undefined {
+        if (itemId > 0 && itemId < this.getState().items.getCount()) {
+            const name = this.getItem(itemId).params?.get(this.SPELL_NAME_PARAM_ID);
+            if (typeof name === "string") return name;
+        }
+        if (!this.spellNamesByWidget) {
+            this.spellNamesByWidget = new Map();
+            for (let id = 0; id < this.getState().items.getCount(); id++) {
+                const params = this.getItem(id).params;
+                const widget = params?.get(this.SPELL_WIDGET_PARAM_ID);
+                const name = params?.get(this.SPELL_NAME_PARAM_ID);
+                if (typeof widget === "number" && typeof name === "string") {
+                    this.spellNamesByWidget.set(widget, name);
+                }
+            }
+        }
+        return this.spellNamesByWidget.get(widgetId);
+    }
+}

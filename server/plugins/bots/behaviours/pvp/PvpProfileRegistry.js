@@ -1,0 +1,160 @@
+"use strict";
+
+function freezeProfile(profile) {
+  return Object.freeze({
+    ...profile,
+    targetReviewMs: Object.freeze({ ...profile.targetReviewMs }),
+    prayerReviewMs: Object.freeze({ ...profile.prayerReviewMs }),
+    targetStyleReactionTicks: profile.targetStyleReactionTicks
+      ? Object.freeze({ ...profile.targetStyleReactionTicks })
+      : null,
+    specReviewMs: Object.freeze({ ...profile.specReviewMs }),
+    freezeReviewMs: Object.freeze({ ...profile.freezeReviewMs }),
+    combatActionMs: Object.freeze({ ...profile.combatActionMs }),
+  });
+}
+
+const PVP_PROFILES = Object.freeze({
+  novice: freezeProfile({
+    id: "novice",
+    label: "Novice",
+    targetReviewMs: { min: 2200, max: 4200 },
+    prayerReviewMs: { min: 1440, max: 2560 },
+    specReviewMs: { min: 1200, max: 2200 },
+    freezeReviewMs: { min: 9000, max: 15000 },
+    combatActionMs: { min: 680, max: 1480 },
+    eatAtHpRatio: 0.61,
+    foodCharges: 10,
+    comboEatChance: 0.08,
+    combatMoveChance: 0.1,
+    switchChance: 0.35,
+    specUseChance: 0.4,
+    specSwitchChance: 0.65,
+    specPressureHpRatio: 0.22,
+    retreatHpRatio: 0.28,
+    chaseDistanceTiles: 7,
+    freezeFollowUpChance: 0.06,
+    freezeUseChance: 0,
+    smiteUseChance: 0.04,
+    riskTolerance: 0.15,
+    confidenceTier: 1,
+  }),
+  standard: freezeProfile({
+    id: "standard",
+    label: "Standard",
+    targetReviewMs: { min: 1400, max: 2600 },
+    prayerReviewMs: { min: 880, max: 1760 },
+    targetStyleReactionTicks: { min: 6, max: 11 },
+    specReviewMs: { min: 800, max: 1500 },
+    freezeReviewMs: { min: 7500, max: 12000 },
+    combatActionMs: { min: 520, max: 1160 },
+    eatAtHpRatio: 0.53,
+    foodCharges: 14,
+    comboEatChance: 0.16,
+    combatMoveChance: 0.3,
+    switchChance: 0.65,
+    specUseChance: 0.62,
+    specSwitchChance: 0.8,
+    specPressureHpRatio: 0.28,
+    retreatHpRatio: 0.24,
+    chaseDistanceTiles: 9,
+    freezeFollowUpChance: 0.12,
+    freezeUseChance: 0.16,
+    smiteUseChance: 0.1,
+    riskTolerance: 0.3,
+    confidenceTier: 2,
+  }),
+  veteran: freezeProfile({
+    id: "veteran",
+    label: "Veteran",
+    targetReviewMs: { min: 900, max: 1800 },
+    prayerReviewMs: { min: 600, max: 1200 },
+    targetStyleReactionTicks: { min: 4, max: 8 },
+    specReviewMs: { min: 600, max: 1000 },
+    freezeReviewMs: { min: 5500, max: 9500 },
+    combatActionMs: { min: 400, max: 960 },
+    eatAtHpRatio: 0.47,
+    foodCharges: 20,
+    comboEatChance: 0.26,
+    combatMoveChance: 0.55,
+    switchChance: 0.75,
+    specUseChance: 0.8,
+    specSwitchChance: 0.92,
+    specPressureHpRatio: 0.34,
+    retreatHpRatio: 0.21,
+    chaseDistanceTiles: 12,
+    freezeFollowUpChance: 0.2,
+    freezeUseChance: 0.32,
+    smiteUseChance: 0.18,
+    oneTickUseChance: 0.7,
+    oneTickGmaulChance: 0.7,
+    oneTickSwitchChance: 0.75,
+    oneTickCooldownMs: 1800,
+    nextHitScriptChance: 0.92,
+    nextHitStyleSwitchChance: 0.85,
+    nextHitFreezeChance: 0.34,
+    nextHitMeleeFinisherHpRatio: 0.48,
+    nextHitScriptCooldownMs: 420,
+    riskTolerance: 0.5,
+    confidenceTier: 3,
+  }),
+  elite: freezeProfile({
+    id: "elite",
+    label: "Elite",
+    targetReviewMs: { min: 420, max: 900 },
+    prayerReviewMs: { min: 256, max: 560 },
+    targetStyleReactionTicks: { min: 3, max: 5 },
+    specReviewMs: { min: 400, max: 700 },
+    freezeReviewMs: { min: 2400, max: 4800 },
+    combatActionMs: { min: 208, max: 496 },
+    eatAtHpRatio: 0.39,
+    foodCharges: 24,
+    comboEatChance: 0.62,
+    combatMoveChance: 0.75,
+    switchChance: 0.95,
+    specUseChance: 0.98,
+    specSwitchChance: 1,
+    specPressureHpRatio: 0.5,
+    retreatHpRatio: 0.14,
+    chaseDistanceTiles: 18,
+    freezeFollowUpChance: 0.5,
+    freezeUseChance: 0.74,
+    smiteUseChance: 0.44,
+    oneTickUseChance: 0.95,
+    oneTickGmaulChance: 0.95,
+    oneTickSwitchChance: 0.98,
+    oneTickCooldownMs: 900,
+    nextHitScriptChance: 0.995,
+    nextHitStyleSwitchChance: 0.98,
+    nextHitFreezeChance: 0.64,
+    nextHitMeleeFinisherHpRatio: 0.62,
+    nextHitScriptCooldownMs: 220,
+    riskTolerance: 0.88,
+    confidenceTier: 4,
+  }),
+});
+
+const PvpProfileId = Object.freeze({
+  NOVICE: "novice",
+  STANDARD: "standard",
+  VETERAN: "veteran",
+  ELITE: "elite",
+});
+
+const PVP_PROFILE_IDS = Object.freeze(Object.keys(PVP_PROFILES));
+
+function getPvpProfile(profileId) {
+  return PVP_PROFILES[profileId] ?? PVP_PROFILES.standard;
+}
+
+function listPvpProfiles() {
+  return PVP_PROFILE_IDS.map((profileId) => PVP_PROFILES[profileId]);
+}
+
+module.exports = {
+  PvpProfileId,
+  PVP_PROFILE_IDS,
+  PVP_PROFILES,
+  getPvpProfile,
+  listPvpProfiles,
+};
