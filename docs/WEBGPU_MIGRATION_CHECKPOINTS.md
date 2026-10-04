@@ -75,9 +75,25 @@ Status: implemented on this branch.
 
 #### 3B. Terrain textures/material parity and A/B activation
 
+Status: in progress.
+
+##### 3B.1. Shared material table and ordinary texture sampling
+
+Status: implemented on this branch.
+
+- Extract the six-row signed-byte material table builder so WebGL2 and WebGPU consume the same animation/alpha/water metadata.
+- Use a 2D WebGPU texture atlas instead of a large texture array, avoiding WebGPU's conservative array-layer limits while retaining the existing packed texture-layer indices.
+- Initialize missing/unstreamed atlas cells to white, matching the current WebGL2 fallback behavior.
+- Upload streamed cache ARGB bytes without color repacking and keep the GLSL-equivalent BGRA swizzle in WGSL.
+- Port packed UV decoding, per-texture UV scrolling, animated-frame selection, nearest texel sampling, palette lighting, brightness, and alpha composition.
+- Keep the atlas path at mip level 0 while the current default nearest filtering mode is used.
+- Add runtime methods to replace/update WebGPU terrain texture resources without rebuilding map geometry.
+
+##### 3B.2. Water/material effects and opt-in A/B activation
+
 Status: pending.
 
-Upload the SD texture/material arrays, port texture animation and water/terrain material sampling, then wire an opt-in WebGPU terrain renderer for side-by-side WebGL2 parity checks before making WebGPU selectable as the live scene backend.
+Port the water mask/material path and water auxiliary textures, then wire an opt-in WebGPU terrain renderer for direct WebGL2 comparison before making WebGPU the live scene backend.
 
 After terrain parity, continue with static scenery/locs.
 

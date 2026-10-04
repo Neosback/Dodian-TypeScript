@@ -12,6 +12,10 @@ import {
 import type { WebGPUTerrainUploadData } from "./terrain/WebGPUTerrainMapResources";
 import { WebGPUTerrainMapResources } from "./terrain/WebGPUTerrainMapResources";
 import { WEBGPU_TERRAIN_SHADER } from "./terrain/WebGPUTerrainShader";
+import {
+    type WebGPUTerrainTextureSet,
+    WebGPUTerrainTextureResources,
+} from "./terrain/WebGPUTerrainTextureResources";
 import { WebGPUSceneUniformBuffer } from "./WebGPUSceneUniforms";
 
 export class WebGPUStaticSceneRenderer {
@@ -19,7 +23,9 @@ export class WebGPUStaticSceneRenderer {
     private sceneUniforms?: WebGPUSceneUniformBuffer;
     private sceneBindGroupLayout?: WebGPUBindGroupLayoutLike;
     private mapBindGroupLayout?: WebGPUBindGroupLayoutLike;
+    private textureBindGroupLayout?: WebGPUBindGroupLayoutLike;
     private sceneBindGroup?: WebGPUBindGroupLike;
+    private terrainTextures?: WebGPUTerrainTextureResources;
     private terrainPipeline?: WebGPURenderPipelineLike;
     private depthTexture?: WebGPUTextureLike;
     private depthWidth = 0;
@@ -63,6 +69,21 @@ export class WebGPUStaticSceneRenderer {
                 },
             ],
         });
+        const textureBindGroupLayout = device.createBindGroupLayout({
+            label: "terrain-texture-bind-group-layout",
+            entries: [
+                {
+                    binding: 0,
+                    visibility: WEBGPU_SHADER_STAGE.VERTEX | WEBGPU_SHADER_STAGE.FRAGMENT,
+                    texture: { sampleType: "float", viewDimension: "2d" },
+                },
+                {
+                    binding: 1,
+                    visibility: WEBGPU_SHADER_STAGE.VERTEX | WEBGPU_SHADER_STAGE.FRAGMENT,
+                    texture: { sampleType: "sint", viewDimension: "2d" },
+                },
+            ],
+        });
 
         const sceneUniforms = new WebGPUSceneUniformBuffer(device);
         const sceneBindGroup = device.createBindGroup({
@@ -77,7 +98,11 @@ export class WebGPUStaticSceneRenderer {
         );
         const pipelineLayout = device.createPipelineLayout({
             label: "terrain-pipeline-layout",
-            bindGroupLayouts: [sceneBindGroupLayout, mapBindGroupLayout],
+            bindGroupLayouts: [
+                sceneBindGroupLayout,
+                mapBindGroupLayout,
+                textureBindGroupLayout,
+            ],
         });
         const terrainPipeline = device.createRenderPipeline({
             label: "terrain-foundation-pipeline",
@@ -118,6 +143,11 @@ export class WebGPUStaticSceneRenderer {
 
         this.sceneBindGroupLayout = sceneBindGroupLayout;
         this.mapBindGroupLayout = mapBindGroupLayout;
+        this.textureBindGroupLayout = textureBindGroupLayout;
+        this.terrainTextures = WebGPUTerrainTextureResources.createFallback(
+            device,
+            textureBindGroupLayout,
+        );
         this.sceneUniforms = sceneUniforms;
         this.sceneBindGroup = sceneBindGroup;
         this.terrainPipeline = terrainPipeline;
@@ -154,6 +184,25 @@ export class WebGPUStaticSceneRenderer {
         this.depthHeight = nextHeight;
     }
 
+    configureTerrainTextures(textureSet: WebGPUTerrainTextureSet): void {
+        const device = this.device;
+        const textureBindGroupLayout = this.textureBindGroupLayout;
+        if (!device || !textureBindGroupLayout) {
+            throw new Error("WebGPU static scene renderer is not initialized");
+        }
+
+        this.terrainTextures?.dispose();
+        this.terrainTextures = new WebGPUTerrainTextureResources(
+            device,
+            textureBindGroupLayout,
+            textureSet,
+        );
+    }
+
+    updateTerrainTextures(textures: ReadonlyMap<number, Int32Array>): number {
+        return this.terrainTextures?.updateTextures(textures) ?? 0;
+    }
+
     uploadTerrain(data: WebGPUTerrainUploadData, loadTime: number): void {
         const device = this.device;
         const mapBindGroupLayout = this.mapBindGroupLayout;
@@ -181,6 +230,7 @@ export class WebGPUStaticSceneRenderer {
         const sceneUniforms = this.sceneUniforms;
         const sceneBindGroup = this.sceneBindGroup;
         const terrainPipeline = this.terrainPipeline;
+        const terrainTextures = this.terrainTextures;
         const depthTexture = this.depthTexture;
         if (
             !device ||
@@ -188,6 +238,7 @@ export class WebGPUStaticSceneRenderer {
             !sceneUniforms ||
             !sceneBindGroup ||
             !terrainPipeline ||
+            !terrainTextures ||
             !depthTexture
         ) {
             return;
@@ -227,6 +278,7 @@ export class WebGPUStaticSceneRenderer {
 
         pass.setPipeline(terrainPipeline);
         pass.setBindGroup(0, sceneBindGroup);
+        pass.setBindGroup(2, terrainTextures.bindGroup);
 
         const viewport = frame.sceneViewport;
         if (viewport.width > 0 && viewport.height > 0) {
@@ -281,6 +333,9 @@ export class WebGPUStaticSceneRenderer {
         this.sceneBindGroup = undefined;
         this.sceneBindGroupLayout = undefined;
         this.mapBindGroupLayout = undefined;
+        this.textureBindGroupLayout = undefined;
+        this.terrainTextures?.dispose();
+        this.terrainTextures = undefined;
         this.terrainPipeline = undefined;
         this.device = undefined;
         this.depthWidth = 0;

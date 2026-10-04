@@ -95,6 +95,24 @@ export interface WebGPUCommandEncoderLike {
     finish(): WebGPUCommandBufferLike;
 }
 
+export interface WebGPUImageCopyTextureLike {
+    texture: WebGPUTextureLike;
+    mipLevel?: number;
+    origin?: { x?: number; y?: number; z?: number };
+}
+
+export interface WebGPUImageDataLayoutLike {
+    offset?: number;
+    bytesPerRow?: number;
+    rowsPerImage?: number;
+}
+
+export interface WebGPUExtent3DLike {
+    width: number;
+    height: number;
+    depthOrArrayLayers?: number;
+}
+
 export interface WebGPUQueueLike {
     writeBuffer(
         buffer: WebGPUBufferLike,
@@ -102,6 +120,12 @@ export interface WebGPUQueueLike {
         data: ArrayBuffer | ArrayBufferView,
         dataOffset?: number,
         size?: number,
+    ): void;
+    writeTexture(
+        destination: WebGPUImageCopyTextureLike,
+        data: ArrayBuffer | ArrayBufferView,
+        dataLayout: WebGPUImageDataLayoutLike,
+        size: WebGPUExtent3DLike,
     ): void;
     submit(commandBuffers: WebGPUCommandBufferLike[]): void;
 }
