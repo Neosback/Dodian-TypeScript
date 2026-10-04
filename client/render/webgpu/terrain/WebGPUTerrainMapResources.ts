@@ -6,7 +6,9 @@ import {
     type WebGPUBindGroupLike,
     type WebGPUBufferLike,
     type WebGPUDeviceLike,
+    type WebGPUTextureLike,
 } from "../../backend/WebGPUPlatform";
+import { WebGPUWaterMaskResources } from "./WebGPUWaterMaskResources";
 
 export interface WebGPUTerrainDrawPlanEntry {
     firstIndex: number;
@@ -33,6 +35,9 @@ export type WebGPUTerrainUploadData = Pick<
     | "indices"
     | "drawRanges"
     | "drawRangesPlanes"
+    | "borderSize"
+    | "heightMapSize"
+    | "waterMaskTextureData"
 >;
 
 export function createWebGPUTerrainDrawPlan(
@@ -99,6 +104,7 @@ export class WebGPUTerrainMapResources {
     readonly plan: WebGPUTerrainDrawPlan;
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
+    readonly waterMask: WebGPUWaterMaskResources;
     readonly draws: WebGPUTerrainDrawResources[];
 
     constructor(
@@ -121,6 +127,16 @@ export class WebGPUTerrainMapResources {
             WEBGPU_BUFFER_USAGE.INDEX,
             new Uint8Array(data.indices.buffer, data.indices.byteOffset, data.indices.byteLength),
         );
+        this.waterMask = new WebGPUWaterMaskResources(
+            device,
+            data.heightMapSize,
+            data.waterMaskTextureData,
+        );
+        const waterMaskView = this.waterMask.texture.createView({
+            dimension: "2d-array",
+            baseArrayLayer: 0,
+            arrayLayerCount: 4,
+        });
 
         this.draws = this.plan.draws.map((draw, index) => {
             const uniformData = new Float32Array([
@@ -128,6 +144,10 @@ export class WebGPUTerrainMapResources {
                 this.plan.renderPosY,
                 draw.plane,
                 loadTime,
+                data.borderSize,
+                0,
+                0,
+                0,
             ]);
             const mapUniformBuffer = createUploadedBuffer(
                 device,
@@ -138,7 +158,10 @@ export class WebGPUTerrainMapResources {
             const mapBindGroup = device.createBindGroup({
                 label: `terrain-${this.plan.mapX}-${this.plan.mapY}-draw-${index}-bind-group`,
                 layout: mapBindGroupLayout,
-                entries: [{ binding: 0, resource: { buffer: mapUniformBuffer } }],
+                entries: [
+                    { binding: 0, resource: { buffer: mapUniformBuffer } },
+                    { binding: 1, resource: waterMaskView },
+                ],
             });
 
             return {
@@ -152,6 +175,7 @@ export class WebGPUTerrainMapResources {
     dispose(): void {
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
+        this.waterMask.dispose();
         for (const draw of this.draws) {
             draw.mapUniformBuffer.destroy?.();
         }

@@ -58,6 +58,7 @@ export interface WebGPUTextureLike {
 export interface WebGPUBindGroupLayoutLike {}
 export interface WebGPUPipelineLayoutLike {}
 export interface WebGPUBindGroupLike {}
+export interface WebGPUSamplerLike {}
 export interface WebGPURenderPipelineLike {}
 export interface WebGPUCommandBufferLike {}
 
@@ -139,6 +140,7 @@ export interface WebGPUDeviceLike {
     createBindGroupLayout(descriptor: Record<string, unknown>): WebGPUBindGroupLayoutLike;
     createPipelineLayout(descriptor: Record<string, unknown>): WebGPUPipelineLayoutLike;
     createBindGroup(descriptor: Record<string, unknown>): WebGPUBindGroupLike;
+    createSampler(descriptor?: Record<string, unknown>): WebGPUSamplerLike;
     createRenderPipeline(descriptor: Record<string, unknown>): WebGPURenderPipelineLike;
     createCommandEncoder(descriptor?: Record<string, unknown>): WebGPUCommandEncoderLike;
     addEventListener?(

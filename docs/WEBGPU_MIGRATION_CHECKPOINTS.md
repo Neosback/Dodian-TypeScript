@@ -91,9 +91,15 @@ Status: implemented on this branch.
 
 ##### 3B.2. Water/material effects and opt-in A/B activation
 
-Status: pending.
+Status: water shader/resources implemented; A/B activation still pending.
 
-Port the water mask/material path and water auxiliary textures, then wire an opt-in WebGPU terrain renderer for direct WebGL2 comparison before making WebGPU the live scene backend.
+- Upload each map square's existing four-plane RGBA water mask into a WebGPU 2D-array texture, including conservative 256-byte row padding.
+- Upload the five shared normal/flow/foam/caustics assets once as a global WebGPU texture array with repeat + linear sampling.
+- Provide deterministic fallback water maps so missing auxiliary assets do not produce undefined GPU reads.
+- Port the current GLSL water-mask shoreline/depth reconstruction, normal blending, flow animation, Fresnel/specular, foam, depth tint, and caustics calculations to WGSL.
+- Reuse the exact shared signed-byte material table for all water parameters and flags.
+- Keep the existing CPU height-map data out of this pass because the current water fragment shader does not sample it.
+- The remaining 3B.2 work is wiring an opt-in live terrain A/B path with automatic rollback to WebGL2.
 
 After terrain parity, continue with static scenery/locs.
 
