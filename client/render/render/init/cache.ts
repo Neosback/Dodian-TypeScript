@@ -187,6 +187,7 @@ import {
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
+import { initWebGPUTerrainComparison } from "../../webgpu/compare/WebGPUTerrainComparison";
 import { RENDER_CONSTANTS } from "../constants";
 
 export function initCache(host: WebGLOsrsRendererHost, ): void {
@@ -194,6 +195,7 @@ export function initCache(host: WebGLOsrsRendererHost, ): void {
         GameRenderer.prototype.initCache.call(host);
         if (host.app) {
             host.initTextures();
+            void initWebGPUTerrainComparison(host);
             // Re-initialize player geometry now that textures are loaded
             // (initial attempt in init() fails because textures aren't ready yet)
             host.playerRenderer.initGeometry().catch((e) => {

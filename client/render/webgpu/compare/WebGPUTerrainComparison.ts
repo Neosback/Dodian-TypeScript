@@ -11,6 +11,7 @@ interface TerrainComparisonState {
     backend: WebGPUGraphicsBackend;
     renderer: WebGPUStaticSceneRenderer;
     previousOnMapRemoved?: (mapX: number, mapY: number) => void;
+    mapRemovedWrapper?: (mapX: number, mapY: number) => void;
     failed: boolean;
 }
 
@@ -123,13 +124,19 @@ export async function initWebGPUTerrainComparison(
         }
 
         const previous = state.previousOnMapRemoved;
-        host.mapManager.onMapRemoved = (mapX, mapY) => {
+        const wrapper = (mapX: number, mapY: number) => {
             try {
                 previous?.(mapX, mapY);
             } finally {
                 if (!state.failed) state.renderer.removeTerrain(mapX, mapY);
             }
         };
+        state.mapRemovedWrapper = wrapper;
+        host.mapManager.onMapRemoved = wrapper;
+
+        if (host.canvas.parentElement && canvas.parentNode !== host.canvas.parentElement) {
+            host.canvas.parentElement.appendChild(canvas);
+        }
 
         console.info(
             "[WebGPU terrain comparison] Active: WebGL2 left half, WebGPU terrain right half.",
@@ -214,7 +221,10 @@ export function disposeWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
     const state = states.get(host);
     if (!state) return;
 
-    if (host.mapManager.onMapRemoved !== state.previousOnMapRemoved) {
+    if (
+        state.mapRemovedWrapper &&
+        host.mapManager.onMapRemoved === state.mapRemovedWrapper
+    ) {
         host.mapManager.onMapRemoved = state.previousOnMapRemoved;
     }
 

@@ -188,7 +188,6 @@ import {
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
 import { WebGL2GraphicsBackend } from "../../backend/WebGL2GraphicsBackend";
-import { initWebGPUTerrainComparison } from "../../webgpu/compare/WebGPUTerrainComparison";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
 import { RENDER_CONSTANTS, optimizeAssumingFlatsHaveSameFirstAndLastData } from "../constants";
 import { initRenderer } from "../handlers";
@@ -264,8 +263,6 @@ export async function init(host: WebGLOsrsRendererHost, ): Promise<void> {
         await host.initWaterTextures();
 
         host.initTextures();
-
-        await initWebGPUTerrainComparison(host);
 
         console.log("Renderer init");
 
