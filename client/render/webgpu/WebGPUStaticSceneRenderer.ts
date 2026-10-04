@@ -1,4 +1,5 @@
 import type { SceneFrameDescription } from "../frame/SceneFrameDescription";
+import type { LocGeometryData, SdMapData } from "../loader/SdMapData";
 import { WebGPUGraphicsBackend } from "../backend/WebGPUGraphicsBackend";
 import {
     WEBGPU_SHADER_STAGE,
@@ -19,7 +20,11 @@ import {
 } from "./terrain/WebGPUTerrainTextureResources";
 import { WebGPUSceneUniformBuffer } from "./WebGPUSceneUniforms";
 import { WebGPUWaterResources } from "./terrain/WebGPUWaterResources";
-import { WebGPUStaticLocResources } from "./loc/WebGPUStaticLocResources";
+import { WebGPUStaticDoorResources } from "./loc/WebGPUStaticDoorResources";
+import {
+    type WebGPUStaticLocPassResources,
+    WebGPUStaticLocResources,
+} from "./loc/WebGPUStaticLocResources";
 
 export type WebGPUTerrainPipelineVariant =
     | "opaque-cull"
@@ -61,6 +66,7 @@ export class WebGPUStaticSceneRenderer {
     private depthHeight = 0;
     private mapsById = new Map<number, WebGPUTerrainMapResources>();
     private locsById = new Map<number, WebGPUStaticLocResources>();
+    private doorsById = new Map<number, WebGPUStaticDoorResources>();
     private mapOrder: number[] = [];
     private visibleMapOrder: number[] = [];
     private visibleMapLod: number[] = [];
@@ -70,6 +76,19 @@ export class WebGPUStaticSceneRenderer {
 
     private mapId(mapX: number, mapY: number): number {
         return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
+    }
+
+    private hasGeometryDraws(geometry: LocGeometryData): boolean {
+        return (
+            geometry.vertices.length > 0 &&
+            geometry.indices.length > 0 &&
+            [
+                geometry.drawRanges,
+                geometry.drawRangesAlpha,
+                geometry.drawRangesLod,
+                geometry.drawRangesLodAlpha,
+            ].some((ranges) => ranges.length > 0)
+        );
     }
 
     async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -443,6 +462,90 @@ export class WebGPUStaticSceneRenderer {
         );
     }
 
+    replaceLocGeometry(data: SdMapData): boolean {
+        const id = this.mapId(data.mapX, data.mapY);
+        if (!this.mapsById.has(id)) {
+            return false;
+        }
+        const device = this.device;
+        const locBindGroupLayout = this.locBindGroupLayout;
+        if (!device || !locBindGroupLayout) {
+            throw new Error("WebGPU static scene renderer is not initialized");
+        }
+
+        this.locsById.get(id)?.dispose();
+        this.locsById.delete(id);
+        if (!this.hasGeometryDraws(data.loc)) {
+            return true;
+        }
+
+        this.locsById.set(
+            id,
+            new WebGPUStaticLocResources(
+                device,
+                locBindGroupLayout,
+                data.mapX,
+                data.mapY,
+                data.loc,
+                data.heightMapSize,
+                data.heightMapTextureData,
+            ),
+        );
+        return true;
+    }
+
+    replaceDoorGeometry(data: SdMapData): boolean {
+        const id = this.mapId(data.mapX, data.mapY);
+        if (!this.mapsById.has(id)) {
+            return false;
+        }
+        const device = this.device;
+        const locBindGroupLayout = this.locBindGroupLayout;
+        if (!device || !locBindGroupLayout) {
+            throw new Error("WebGPU static scene renderer is not initialized");
+        }
+
+        this.doorsById.get(id)?.dispose();
+        this.doorsById.delete(id);
+        const doorGeometry = {
+            vertices: data.doorVertices,
+            indices: data.doorIndices,
+            modelTextureData: data.doorModelTextureData,
+            modelTextureDataAlpha: data.doorModelTextureDataAlpha,
+            modelTextureDataLod: data.doorModelTextureDataLod,
+            modelTextureDataLodAlpha: data.doorModelTextureDataLodAlpha,
+            modelTextureDataInteract: data.doorModelTextureDataInteract,
+            modelTextureDataInteractAlpha: data.doorModelTextureDataInteractAlpha,
+            modelTextureDataInteractLod: data.doorModelTextureDataInteractLod,
+            modelTextureDataInteractLodAlpha: data.doorModelTextureDataInteractLodAlpha,
+            drawRanges: data.doorDrawRanges,
+            drawRangesAlpha: data.doorDrawRangesAlpha,
+            drawRangesPlanes: data.doorDrawRangesPlanes,
+            drawRangesAlphaPlanes: data.doorDrawRangesAlphaPlanes,
+            drawRangesLod: data.doorDrawRangesLod,
+            drawRangesLodAlpha: data.doorDrawRangesLodAlpha,
+            drawRangesLodPlanes: data.doorDrawRangesLodPlanes,
+            drawRangesLodAlphaPlanes: data.doorDrawRangesLodAlphaPlanes,
+            drawRangesInteract: data.doorDrawRangesInteract,
+            drawRangesInteractAlpha: data.doorDrawRangesInteractAlpha,
+            drawRangesInteractPlanes: data.doorDrawRangesInteractPlanes,
+            drawRangesInteractAlphaPlanes: data.doorDrawRangesInteractAlphaPlanes,
+            drawRangesInteractLod: data.doorDrawRangesInteractLod,
+            drawRangesInteractLodAlpha: data.doorDrawRangesInteractLodAlpha,
+            drawRangesInteractLodPlanes: data.doorDrawRangesInteractLodPlanes,
+            drawRangesInteractLodAlphaPlanes: data.doorDrawRangesInteractLodAlphaPlanes,
+        } satisfies LocGeometryData;
+        if (!this.hasGeometryDraws(doorGeometry)) {
+            return true;
+        }
+
+        this.doorsById.set(
+            id,
+            new WebGPUStaticDoorResources(device, locBindGroupLayout, data),
+        );
+        return true;
+    }
+
     uploadTerrain(data: WebGPUTerrainUploadData, loadTime: number): void {
         const device = this.device;
         const mapBindGroupLayout = this.mapBindGroupLayout;
@@ -464,40 +567,12 @@ export class WebGPUStaticSceneRenderer {
         );
         this.mapsById.set(id, mapResources);
 
-        this.locsById.get(id)?.dispose();
-        this.locsById.delete(id);
-        const locBindGroupLayout = this.locBindGroupLayout;
-        const locData = (data as any).loc;
-        const heightMapTextureData = (data as any).heightMapTextureData as Int16Array | undefined;
-        const hasLocDraws =
-            locData &&
-            [
-                locData.drawRanges,
-                locData.drawRangesAlpha,
-                locData.drawRangesLod,
-                locData.drawRangesLodAlpha,
-            ].some((ranges: readonly unknown[] | undefined) => (ranges?.length ?? 0) > 0);
-        if (
-            locBindGroupLayout &&
-            locData &&
-            locData.vertices?.length > 0 &&
-            locData.indices?.length > 0 &&
-            hasLocDraws &&
-            heightMapTextureData &&
-            heightMapTextureData.length > 0
-        ) {
-            this.locsById.set(
-                id,
-                new WebGPUStaticLocResources(
-                    device,
-                    locBindGroupLayout,
-                    data.mapX,
-                    data.mapY,
-                    locData,
-                    data.heightMapSize,
-                    heightMapTextureData,
-                ),
-            );
+        const sceneData = data as WebGPUTerrainUploadData & Partial<SdMapData>;
+        if (sceneData.loc && sceneData.heightMapTextureData) {
+            this.replaceLocGeometry(sceneData as SdMapData);
+        }
+        if (sceneData.doorVertices && sceneData.heightMapTextureData) {
+            this.replaceDoorGeometry(sceneData as SdMapData);
         }
     }
 
@@ -505,7 +580,9 @@ export class WebGPUStaticSceneRenderer {
         const id = this.mapId(mapX, mapY);
         this.mapsById.get(id)?.dispose();
         this.locsById.get(id)?.dispose();
+        this.doorsById.get(id)?.dispose();
         this.locsById.delete(id);
+        this.doorsById.delete(id);
         if (this.mapsById.delete(id)) {
             const index = this.mapOrder.indexOf(id);
             if (index >= 0) {
@@ -523,6 +600,10 @@ export class WebGPUStaticSceneRenderer {
             locs.dispose();
         }
         this.locsById.clear();
+        for (const doors of this.doorsById.values()) {
+            doors.dispose();
+        }
+        this.doorsById.clear();
         this.mapOrder.length = 0;
         this.visibleMapOrder.length = 0;
         this.visibleMapLod.length = 0;
@@ -553,6 +634,36 @@ export class WebGPUStaticSceneRenderer {
 
     private mapUsesLod(orderIndex: number): boolean {
         return this.visibilityFilterEnabled && this.visibleMapLod[orderIndex] === 1;
+    }
+
+    private drawStaticGeometry(
+        pass: WebGPURenderPassEncoderLike,
+        frame: SceneFrameDescription,
+        map: WebGPUTerrainMapResources,
+        resources: WebGPUStaticLocResources | undefined,
+        staticPass: WebGPUStaticLocPassResources | undefined,
+        pipeline: WebGPURenderPipelineLike,
+    ): void {
+        if (!resources || !staticPass || staticPass.draws.length === 0) {
+            return;
+        }
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(1, map.sharedMapBindGroup);
+        pass.setBindGroup(4, staticPass.bindGroup);
+        pass.setVertexBuffer(0, resources.vertexBuffer);
+        pass.setIndexBuffer(resources.indexBuffer, "uint32");
+        for (const draw of staticPass.draws) {
+            if (draw.plane > frame.roofPlaneLimit) {
+                continue;
+            }
+            pass.drawIndexed(
+                draw.indexCount,
+                draw.instanceCount,
+                draw.firstIndex,
+                0,
+                draw.firstInstance,
+            );
+        }
     }
 
     private drawOpaqueScene(
@@ -589,27 +700,23 @@ export class WebGPUStaticSceneRenderer {
             }
 
             const locs = this.locsById.get(id);
-            const locPass = locs?.getPass(false, lod);
-            if (!locs || !locPass || locPass.draws.length === 0) {
-                continue;
-            }
-            pass.setPipeline(locPipeline);
-            pass.setBindGroup(1, map.sharedMapBindGroup);
-            pass.setBindGroup(4, locPass.bindGroup);
-            pass.setVertexBuffer(0, locs.vertexBuffer);
-            pass.setIndexBuffer(locs.indexBuffer, "uint32");
-            for (const draw of locPass.draws) {
-                if (draw.plane > frame.roofPlaneLimit) {
-                    continue;
-                }
-                pass.drawIndexed(
-                    draw.indexCount,
-                    draw.instanceCount,
-                    draw.firstIndex,
-                    0,
-                    draw.firstInstance,
-                );
-            }
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                locs,
+                locs?.getPass(false, lod),
+                locPipeline,
+            );
+            const doors = this.doorsById.get(id);
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                doors,
+                doors?.getPass(false, lod),
+                locPipeline,
+            );
         }
     }
 
@@ -647,27 +754,23 @@ export class WebGPUStaticSceneRenderer {
             }
 
             const locs = this.locsById.get(id);
-            const locPass = locs?.getPass(true, lod);
-            if (!locs || !locPass || locPass.draws.length === 0) {
-                continue;
-            }
-            pass.setPipeline(locPipeline);
-            pass.setBindGroup(1, map.sharedMapBindGroup);
-            pass.setBindGroup(4, locPass.bindGroup);
-            pass.setVertexBuffer(0, locs.vertexBuffer);
-            pass.setIndexBuffer(locs.indexBuffer, "uint32");
-            for (const draw of locPass.draws) {
-                if (draw.plane > frame.roofPlaneLimit) {
-                    continue;
-                }
-                pass.drawIndexed(
-                    draw.indexCount,
-                    draw.instanceCount,
-                    draw.firstIndex,
-                    0,
-                    draw.firstInstance,
-                );
-            }
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                locs,
+                locs?.getPass(true, lod),
+                locPipeline,
+            );
+            const doors = this.doorsById.get(id);
+            this.drawStaticGeometry(
+                pass,
+                frame,
+                map,
+                doors,
+                doors?.getPass(true, lod),
+                locPipeline,
+            );
         }
     }
 
@@ -803,5 +906,6 @@ export class WebGPUStaticSceneRenderer {
         this.mapOrder.length = 0;
         this.mapsById.clear();
         this.locsById.clear();
+        this.doorsById.clear();
     }
 }
