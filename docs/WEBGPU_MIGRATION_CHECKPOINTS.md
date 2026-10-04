@@ -91,7 +91,7 @@ Status: implemented on this branch.
 
 ##### 3B.2. Water/material effects and opt-in A/B activation
 
-Status: water shader/resources implemented; A/B activation still pending.
+Status: water shader/resources and opt-in A/B activation implemented.
 
 - Upload each map square's existing four-plane RGBA water mask into a WebGPU 2D-array texture, including conservative 256-byte row padding.
 - Upload the five shared normal/flow/foam/caustics assets once as a global WebGPU texture array with repeat + linear sampling.
@@ -99,7 +99,12 @@ Status: water shader/resources implemented; A/B activation still pending.
 - Port the current GLSL water-mask shoreline/depth reconstruction, normal blending, flow animation, Fresnel/specular, foam, depth tint, and caustics calculations to WGSL.
 - Reuse the exact shared signed-byte material table for all water parameters and flags.
 - Keep the existing CPU height-map data out of this pass because the current water fragment shader does not sample it.
-- The remaining 3B.2 work is wiring an opt-in live terrain A/B path with automatic rollback to WebGL2.
+- Add `?webgpuTerrain=1` (also `true`, `compare`, or `split`) as an explicit terrain comparison mode.
+- Keep WebGL2 authoritative on the normal canvas while a separate WebGPU canvas renders the same terrain on the right half of the viewport.
+- Mirror streamed texture pixels and accepted full map payloads into WebGPU without duplicating the worker/cache scene builder.
+- Chain map-removal callbacks so pruned WebGL map squares remove their WebGPU terrain resources too.
+- On WebGPU init, render, validation, or device-loss failure, immediately hide/dispose the comparison surface and leave WebGL2 running.
+- Keep `?renderer=webgpu` reserved for the eventual full renderer instead of silently treating a terrain-only preview as a complete backend.
 
 After terrain parity, continue with static scenery/locs.
 

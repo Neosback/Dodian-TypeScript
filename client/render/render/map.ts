@@ -187,6 +187,10 @@ import {
 } from "../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../water/WaterTextureIds";
 import type { WebGLOsrsRendererHost } from "./hostInterface";
+import {
+    clearWebGPUTerrainComparisonMaps,
+    syncWebGPUTerrainMap,
+} from "../webgpu/compare/WebGPUTerrainComparison";
 import { RENDER_CONSTANTS } from "./constants";
 
 export function resolveLocReloadBatchMap(host: WebGLOsrsRendererHost, 
@@ -345,6 +349,9 @@ export function loadMap(host: WebGLOsrsRendererHost,
             host.pendingLocGeometryUpdates.delete(mapId);
             host.pendingDoorLocUpdates.delete(mapId);
             host.updateTextureArray(mapData.loadedTextures);
+            if (!mapData.doorOnly && !mapData.locOnly) {
+                syncWebGPUTerrainMap(host, mapData, existing.timeLoaded);
+            }
             return;
         }
 
@@ -397,6 +404,7 @@ export function loadMap(host: WebGLOsrsRendererHost,
         }
 
         host.updateTextureArray(mapData.loadedTextures);
+        syncWebGPUTerrainMap(host, mapData, reuseTime);
 
         host.pendingLocUpdates.delete(mapId);
         host.pendingLocGeometryUpdates.delete(mapId);
@@ -417,6 +425,7 @@ export function isValidMapData(host: WebGLOsrsRendererHost, mapData: SdMapData):
 export function clearMaps(host: WebGLOsrsRendererHost, ): void {
 
         host.mapManager.cleanUp();
+        clearWebGPUTerrainComparisonMaps(host);
         host.mapsToLoad.clear();
         host.pendingStreamMapsByGeneration.clear();
         host.observedGridRevision = -1;

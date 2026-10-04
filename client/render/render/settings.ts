@@ -187,6 +187,7 @@ import {
 } from "../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../water/WaterTextureIds";
 import type { WebGLOsrsRendererHost } from "./hostInterface";
+import { renderWebGPUTerrainComparison } from "../webgpu/compare/WebGPUTerrainComparison";
 import { RENDER_CONSTANTS } from "./constants";
 
 export function setSkyColor(host: WebGLOsrsRendererHost, r: number, g: number, b: number) {
@@ -279,6 +280,8 @@ export function finishRenderFrame(host: WebGLOsrsRendererHost,
         host.stats.height = host.app.height | 0;
         host.stats.sceneWidth = host.sceneRenderWidth | 0;
         host.stats.sceneHeight = host.sceneRenderHeight | 0;
+
+        renderWebGPUTerrainComparison(host);
 
         host.stats.cameraPosX = camera.getPosX();
         host.stats.cameraPosY = camera.getPosY();

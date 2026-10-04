@@ -187,6 +187,7 @@ import {
 } from "../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../water/WaterTextureIds";
 import type { WebGLOsrsRendererHost } from "./hostInterface";
+import { disposeWebGPUTerrainComparison } from "../webgpu/compare/WebGPUTerrainComparison";
 import { RENDER_CONSTANTS } from "./constants";
 import { cleanUpRenderer } from "./handlers";
 
@@ -273,6 +274,7 @@ export function clearSessionCaches(host: WebGLOsrsRendererHost, ): void {
 export async function cleanUp(host: WebGLOsrsRendererHost, ): Promise<void> {
 
         cleanUpRenderer(host);
+        disposeWebGPUTerrainComparison(host);
         host.canvas.removeEventListener("touchstart", host.onCanvasTouchStart, true);
         if (isMobileMode && typeof window !== "undefined") {
             window.removeEventListener("resize", host.onMobileLoginViewportChange);

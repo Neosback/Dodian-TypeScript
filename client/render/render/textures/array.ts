@@ -187,6 +187,7 @@ import {
 } from "../../shaders/Shaders";
 import { KNOWN_WATER_TEXTURE_IDS } from "../../water/WaterTextureIds";
 import type { WebGLOsrsRendererHost } from "../hostInterface";
+import { syncWebGPUTerrainTextures } from "../../webgpu/compare/WebGPUTerrainComparison";
 import { RENDER_CONSTANTS, TEXTURE_SIZE, TextureFilterMode, getMaxAnisotropy } from "../constants";
 
 export function initTextureArray(host: WebGLOsrsRendererHost, ) {
@@ -306,6 +307,8 @@ export function updateTextureFiltering(host: WebGLOsrsRendererHost, ): void {
 }
 
 export function updateTextureArray(host: WebGLOsrsRendererHost, textures: Map<number, Int32Array>): void {
+
+        syncWebGPUTerrainTextures(host, textures);
 
         if (!host.textureArray) {
             throw new Error("Texture array is not initialized");
