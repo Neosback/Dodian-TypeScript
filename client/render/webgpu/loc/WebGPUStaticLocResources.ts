@@ -34,6 +34,16 @@ export type WebGPUStaticLocGeometryData = Pick<
     | "drawRangesPlanes"
 >;
 
+export type WebGPUStaticLocPassKind = "opaque" | "alpha" | "lod" | "lodAlpha";
+
+export interface WebGPUStaticLocPassResources {
+    readonly modelInfoBuffer: WebGPUBufferLike;
+    readonly bindGroup: WebGPUBindGroupLike;
+    readonly draws: WebGPUStaticLocDrawPlanEntry[];
+}
+
+const EMPTY_DRAWS: WebGPUStaticLocDrawPlanEntry[] = [];
+
 function alignedBufferSize(byteLength: number): number {
     return Math.max(4, (byteLength + 3) & ~3);
 }
@@ -55,12 +65,13 @@ function createUploadedBuffer(
     return buffer;
 }
 
-export function createWebGPUStaticLocPlan(
-    geometry: WebGPUStaticLocGeometryData,
+export function createWebGPUStaticLocPlanFromData(
+    modelData: Uint16Array,
+    drawRanges: readonly DrawRange[],
+    drawRangesPlanes?: Uint8Array,
 ): WebGPUStaticLocPlan {
     const draws: WebGPUStaticLocDrawPlanEntry[] = [];
-    const drawCount = geometry.drawRanges.length;
-    const modelData = geometry.modelTextureData;
+    const drawCount = drawRanges.length;
     const headerWords = drawCount * 4;
 
     if (modelData.length < headerWords) {
@@ -71,7 +82,7 @@ export function createWebGPUStaticLocPlan(
 
     let maxInstance = 0;
     for (let i = 0; i < drawCount; i++) {
-        const range: DrawRange = geometry.drawRanges[i];
+        const range = drawRanges[i];
         const byteOffset = range[0] | 0;
         const indexCount = range[1] | 0;
         const instanceCount = Math.max(1, range[2] | 0);
@@ -95,7 +106,7 @@ export function createWebGPUStaticLocPlan(
             indexCount,
             instanceCount,
             firstInstance,
-            plane: geometry.drawRangesPlanes[i] ?? 0,
+            plane: drawRangesPlanes?.[i] ?? 0,
         });
     }
 
@@ -114,26 +125,76 @@ export function createWebGPUStaticLocPlan(
     return { draws, modelInfoWords };
 }
 
+export function createWebGPUStaticLocPlan(
+    geometry: WebGPUStaticLocGeometryData,
+): WebGPUStaticLocPlan {
+    return createWebGPUStaticLocPlanFromData(
+        geometry.modelTextureData,
+        geometry.drawRanges,
+        geometry.drawRangesPlanes,
+    );
+}
+
+function createPassResources(
+    device: WebGPUDeviceLike,
+    bindGroupLayout: WebGPUBindGroupLayoutLike,
+    heightMapView: unknown,
+    mapX: number,
+    mapY: number,
+    kind: WebGPUStaticLocPassKind,
+    modelTextureData: Uint16Array,
+    drawRanges: readonly DrawRange[],
+    drawRangesPlanes: Uint8Array,
+): WebGPUStaticLocPassResources | undefined {
+    const plan = createWebGPUStaticLocPlanFromData(
+        modelTextureData,
+        drawRanges,
+        drawRangesPlanes,
+    );
+    if (plan.draws.length === 0) {
+        return undefined;
+    }
+
+    const modelInfoBuffer = createUploadedBuffer(
+        device,
+        `loc-${mapX}-${mapY}-${kind}-model-info`,
+        WEBGPU_BUFFER_USAGE.STORAGE,
+        plan.modelInfoWords,
+    );
+    const bindGroup = device.createBindGroup({
+        label: `loc-${mapX}-${mapY}-${kind}-bind-group`,
+        layout: bindGroupLayout,
+        entries: [
+            { binding: 0, resource: heightMapView },
+            { binding: 1, resource: { buffer: modelInfoBuffer } },
+        ],
+    });
+
+    return {
+        modelInfoBuffer,
+        bindGroup,
+        draws: plan.draws,
+    };
+}
+
 export class WebGPUStaticLocResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
-    readonly modelInfoBuffer: WebGPUBufferLike;
     readonly heightMap: WebGPUHeightMapResources;
-    readonly bindGroup: WebGPUBindGroupLike;
-    readonly draws: WebGPUStaticLocDrawPlanEntry[];
+    readonly opaque?: WebGPUStaticLocPassResources;
+    readonly alpha?: WebGPUStaticLocPassResources;
+    readonly lod?: WebGPUStaticLocPassResources;
+    readonly lodAlpha?: WebGPUStaticLocPassResources;
 
     constructor(
         device: WebGPUDeviceLike,
         bindGroupLayout: WebGPUBindGroupLayoutLike,
         mapX: number,
         mapY: number,
-        geometry: WebGPUStaticLocGeometryData,
+        geometry: LocGeometryData,
         heightMapSize: number,
         heightMapTextureData: Int16Array,
     ) {
-        const plan = createWebGPUStaticLocPlan(geometry);
-        this.draws = plan.draws;
-
         this.vertexBuffer = createUploadedBuffer(
             device,
             `loc-${mapX}-${mapY}-vertices`,
@@ -150,40 +211,93 @@ export class WebGPUStaticLocResources {
                 geometry.indices.byteLength,
             ),
         );
-        this.modelInfoBuffer = createUploadedBuffer(
-            device,
-            `loc-${mapX}-${mapY}-model-info`,
-            WEBGPU_BUFFER_USAGE.STORAGE,
-            plan.modelInfoWords,
-        );
         this.heightMap = new WebGPUHeightMapResources(
             device,
             heightMapSize,
             heightMapTextureData,
         );
 
-        this.bindGroup = device.createBindGroup({
-            label: `loc-${mapX}-${mapY}-bind-group`,
-            layout: bindGroupLayout,
-            entries: [
-                {
-                    binding: 0,
-                    resource: this.heightMap.texture.createView({
-                        dimension: "2d-array",
-                        baseArrayLayer: 0,
-                        arrayLayerCount: WEBGPU_HEIGHT_MAP_LAYERS,
-                    }),
-                },
-                { binding: 1, resource: { buffer: this.modelInfoBuffer } },
-            ],
+        const heightMapView = this.heightMap.texture.createView({
+            dimension: "2d-array",
+            baseArrayLayer: 0,
+            arrayLayerCount: WEBGPU_HEIGHT_MAP_LAYERS,
         });
+
+        this.opaque = createPassResources(
+            device,
+            bindGroupLayout,
+            heightMapView,
+            mapX,
+            mapY,
+            "opaque",
+            geometry.modelTextureData,
+            geometry.drawRanges,
+            geometry.drawRangesPlanes,
+        );
+        this.alpha = createPassResources(
+            device,
+            bindGroupLayout,
+            heightMapView,
+            mapX,
+            mapY,
+            "alpha",
+            geometry.modelTextureDataAlpha,
+            geometry.drawRangesAlpha,
+            geometry.drawRangesAlphaPlanes,
+        );
+        this.lod = createPassResources(
+            device,
+            bindGroupLayout,
+            heightMapView,
+            mapX,
+            mapY,
+            "lod",
+            geometry.modelTextureDataLod,
+            geometry.drawRangesLod,
+            geometry.drawRangesLodPlanes,
+        );
+        this.lodAlpha = createPassResources(
+            device,
+            bindGroupLayout,
+            heightMapView,
+            mapX,
+            mapY,
+            "lodAlpha",
+            geometry.modelTextureDataLodAlpha,
+            geometry.drawRangesLodAlpha,
+            geometry.drawRangesLodAlphaPlanes,
+        );
+    }
+
+    /** Backward-compatible ordinary opaque access used by the first loc checkpoint. */
+    get draws(): WebGPUStaticLocDrawPlanEntry[] {
+        return this.opaque?.draws ?? EMPTY_DRAWS;
+    }
+
+    /** Backward-compatible ordinary opaque access used by the first loc checkpoint. */
+    get bindGroup(): WebGPUBindGroupLike {
+        if (!this.opaque) {
+            throw new Error("Opaque static-loc resources are unavailable");
+        }
+        return this.opaque.bindGroup;
+    }
+
+    getPass(transparent: boolean, lod: boolean): WebGPUStaticLocPassResources | undefined {
+        if (lod) {
+            return transparent ? this.lodAlpha : this.lod;
+        }
+        return transparent ? this.alpha : this.opaque;
     }
 
     dispose(): void {
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
-        this.modelInfoBuffer.destroy?.();
+        for (const pass of [this.opaque, this.alpha, this.lod, this.lodAlpha]) {
+            pass?.modelInfoBuffer.destroy?.();
+            if (pass) {
+                pass.draws.length = 0;
+            }
+        }
         this.heightMap.dispose();
-        this.draws.length = 0;
     }
 }
