@@ -121,7 +121,10 @@ export function createWebGPUStaticLocPlanFromData(
                 `Loc model-info draw ${i} has invalid first instance ${firstInstance}`,
             );
         }
-        maxInstance = Math.max(maxInstance, firstInstance + instanceCount);
+        maxInstance = Math.max(
+            maxInstance,
+            firstInstance + Math.max(1, instanceCount),
+        );
 
         draws.push({
             firstIndex: byteOffset >>> 2,
