@@ -54,6 +54,7 @@ export class WebGPUStaticDoorResources extends WebGPUStaticLocResources {
             createWebGPUStaticDoorGeometryData(data),
             data.heightMapSize,
             data.heightMapTextureData,
+            false,
         );
     }
 }
