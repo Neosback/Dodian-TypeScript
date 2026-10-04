@@ -6,6 +6,11 @@ import { buildMaterialTable } from "../../texture/MaterialTable";
 import { WebGPUStaticSceneRenderer } from "../WebGPUStaticSceneRenderer";
 import { createFallbackWaterTextureData } from "../terrain/WebGPUWaterResources";
 
+interface VisibleComparisonMap {
+    mapX: number;
+    mapY: number;
+}
+
 interface TerrainComparisonState {
     canvas: HTMLCanvasElement;
     backend: WebGPUGraphicsBackend;
@@ -16,6 +21,8 @@ interface TerrainComparisonState {
     failed: boolean;
     pendingTextures: Map<number, Int32Array>;
     pendingMaps: Map<string, { mapData: SdMapData; loadTime: number }>;
+    visibleMaps: VisibleComparisonMap[];
+    visibleMapLod: number[];
 }
 
 const states = new WeakMap<object, TerrainComparisonState>();
@@ -49,6 +56,8 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     state.ready = false;
     state.pendingTextures.clear();
     state.pendingMaps.clear();
+    state.visibleMaps.length = 0;
+    state.visibleMapLod.length = 0;
     state.canvas.style.display = "none";
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
@@ -88,6 +97,8 @@ export async function initWebGPUTerrainComparison(
         failed: false,
         pendingTextures: new Map(),
         pendingMaps: new Map(),
+        visibleMaps: [],
+        visibleMapLod: [],
     };
     states.set(host, state);
 
@@ -234,6 +245,8 @@ export function clearWebGPUTerrainComparisonMaps(host: WebGLOsrsRenderer): void 
     const state = states.get(host);
     if (!state || state.failed) return;
     state.pendingMaps.clear();
+    state.visibleMaps.length = 0;
+    state.visibleMapLod.length = 0;
     if (!state.ready) return;
     try {
         state.renderer.clearTerrain();
@@ -250,9 +263,43 @@ export function renderWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
         const height = Math.max(1, host.canvas.height | 0);
         if (state.canvas.width !== width) state.canvas.width = width;
         if (state.canvas.height !== height) state.canvas.height = height;
-        state.renderer.setVisibleTerrainMaps(
-            host.mapManager.visibleMaps,
-            host.mapManager.visibleMapCount,
+
+        const cullTile = host.getRenderCullTile();
+        const renderDistanceTiles = Math.max(0, host.getFrameRenderDistanceTiles() | 0);
+        const lodThresholdTiles = Math.max(0, host.getFrameLodThresholdTiles() | 0);
+        const sourceMaps = host.mapManager.visibleMaps;
+        const sourceCount = Math.min(host.mapManager.visibleMapCount, sourceMaps.length);
+        let selectedCount = 0;
+
+        for (let i = 0; i < sourceCount; i++) {
+            const map = sourceMaps[i];
+            if (
+                !host.isMapWithinRenderDistance(
+                    map,
+                    cullTile.x,
+                    cullTile.y,
+                    renderDistanceTiles,
+                    0,
+                )
+            ) {
+                continue;
+            }
+
+            state.visibleMaps[selectedCount] = map;
+            state.visibleMapLod[selectedCount] =
+                host.getMapTileDistanceFromPoint(map, cullTile.x, cullTile.y) >
+                lodThresholdTiles
+                    ? 1
+                    : 0;
+            selectedCount++;
+        }
+
+        state.visibleMaps.length = selectedCount;
+        state.visibleMapLod.length = selectedCount;
+        state.renderer.setVisibleSceneMaps(
+            state.visibleMaps,
+            state.visibleMapLod,
+            selectedCount,
         );
         state.renderer.render(host.sceneFrameDescription);
     } catch (error) {
@@ -271,6 +318,8 @@ export function disposeWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
         host.mapManager.onMapRemoved = state.previousOnMapRemoved;
     }
 
+    state.visibleMaps.length = 0;
+    state.visibleMapLod.length = 0;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     state.canvas.remove();
