@@ -45,9 +45,16 @@ Status: implemented on this branch.
 
 ### 2. Backend selection and WebGPU device bootstrap
 
-Status: pending.
+Status: bootstrap infrastructure implemented on this branch.
 
-Add WebGPU capability detection, explicit renderer preference, async adapter/device initialization, shader diagnostics, device-loss handling, and automatic WebGL2 fallback.
+- Parse `?renderer=webgpu` and `?renderer=webgl2` preferences, with `webgl` accepted as a legacy alias.
+- Resolve backend order with WebGPU preferred in auto mode and WebGL2 retained as fallback.
+- Add async high-performance WebGPU adapter/device initialization.
+- Keep device creation separate from canvas context acquisition so fallback can replace the canvas instead of attempting two graphics context types on one element.
+- Configure the preferred WebGPU canvas format and explicit alpha mode.
+- Report uncaptured validation errors and device-loss details through callbacks.
+- Add WGSL compilation diagnostics that surface line/column errors before pipeline creation.
+- Do not activate WebGPU as the live renderer until the static scene pass exists; the current client remains WebGL2-backed to avoid a blank intermediate renderer.
 
 ### 3. Static scene
 
