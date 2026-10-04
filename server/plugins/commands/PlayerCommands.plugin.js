@@ -1,4 +1,5 @@
 const { GameConstants } = require("../../src/main/typescript/elvarg/game/GameConstants");
+const { Location } = require("../../src/main/typescript/elvarg/game/model/Location");
 const { Misc } = require("../../src/main/typescript/elvarg/util/Misc");
 const { PasswordUtil } = require("../../src/main/typescript/elvarg/util/PasswordUtil");
 const { Item } = require("../../src/main/typescript/elvarg/game/model/Item");
@@ -103,6 +104,18 @@ module.exports = {
     PlayerPunishment = api.getPlayerPunishment();
     api.registerCommand("players", ({ player }) => {
       sendOnlinePlayers(player);
+      return true;
+    });
+
+    api.registerCommand("yan", ({ player }) => {
+      player.moveTo(new Location(2606, 3093, 0));
+      player.sendMessage("Teleported to Yanille.");
+      return true;
+    });
+
+    api.registerCommand("yanille", ({ player }) => {
+      player.moveTo(new Location(2606, 3093, 0));
+      player.sendMessage("Teleported to Yanille.");
       return true;
     });
 

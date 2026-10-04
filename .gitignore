@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+*/node_modules/
+**/node_modules/
+.yarn/
+*/.yarn/
+**/.yarn/
+.pnp
+.pnp.js
+
+# Testing & Coverage
+coverage/
+**/coverage/
+
+# Production builds
+build/
+client/build/
+dist/
+**/dist/
+client/public/browser-host/interfaces/
+
+# Misc & OS
+.DS_Store
+Thumbs.db
+.env*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+
+# Caches & Temp
+caches/
+server/cache/
+tmp/
+.tmp/
+server/data/player-state.json
+server/data/gamemodes/*/player-state.json
+server/data/gamemodes/*/accounts.json
+server/data/gamemodes/*/game.sqlite*
+
+# IDE / Editor files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.claude/
+.codex/

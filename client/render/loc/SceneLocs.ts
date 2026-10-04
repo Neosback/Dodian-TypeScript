@@ -13,6 +13,7 @@ import { getBridgeAdjustedPlane, getBridgeLinkedBelow } from "../../game/scene/B
 import { clampPlane } from "../../game/utils/PlaneUtil";
 import { InteractType } from "../../render/InteractType";
 import { ContourGroundType, SceneModel } from "../buffer/SceneBuffer";
+import { embeddedWallDecorationShift, wallDecorationNudge } from "../../rs/scene/WallDecorationOffset";
 import { SceneLocEntity } from "./SceneLocEntity";
 
 export type SceneLocs = {
@@ -367,8 +368,57 @@ export function getSceneLocs(
             }
 
             if (sourceTile.wallDecoration) {
-                const offsetX = sourceTile.wallDecoration.offsetX;
-                const offsetY = sourceTile.wallDecoration.offsetY;
+                const decorationType = sourceTile.wallDecoration.flags & 0x3f;
+                const decorationRotation = (sourceTile.wallDecoration.flags >> 6) & 3;
+                const nudge = wallDecorationNudge(decorationType, decorationRotation);
+
+                const isDiagonalDecor =
+                    decorationType === LocModelType.WALL_DECORATION_DIAGONAL_DOUBLE ||
+                    decorationType === LocModelType.WALL_DECORATION_DIAGONAL_INSIDE ||
+                    decorationType === LocModelType.WALL_DECORATION_DIAGONAL_OUTSIDE;
+
+                const wall = sourceTile.wall;
+                const diagWall = sourceTile.locs.find((l) => (l.flags & 0x3f) === LocModelType.WALL_DIAGONAL);
+
+                let shift = { x: 0, y: 0 };
+                if (isDiagonalDecor && diagWall) {
+                    const decorDisplacement =
+                        locTypeLoader.load(getIdFromTag(diagWall.tag))?.decorDisplacement ??
+                        LocType.DEFAULT_DECOR_DISPLACEMENT;
+                    shift = embeddedWallDecorationShift(
+                        decorationType,
+                        decorationRotation,
+                        diagWall.flags & 0x3f,
+                        (diagWall.flags >> 6) & 3,
+                        decorDisplacement,
+                    );
+                } else if (wall) {
+                    const decorDisplacement =
+                        locTypeLoader.load(getIdFromTag(wall.tag))?.decorDisplacement ??
+                        LocType.DEFAULT_DECOR_DISPLACEMENT;
+                    shift = embeddedWallDecorationShift(
+                        decorationType,
+                        decorationRotation,
+                        wall.flags & 0x3f,
+                        (wall.flags >> 6) & 3,
+                        decorDisplacement,
+                    );
+                } else if (diagWall) {
+                    const decorDisplacement =
+                        locTypeLoader.load(getIdFromTag(diagWall.tag))?.decorDisplacement ??
+                        LocType.DEFAULT_DECOR_DISPLACEMENT;
+                    shift = embeddedWallDecorationShift(
+                        decorationType,
+                        decorationRotation,
+                        diagWall.flags & 0x3f,
+                        (diagWall.flags >> 6) & 3,
+                        decorDisplacement,
+                    );
+                }
+
+                const offsetX = sourceTile.wallDecoration.offsetX + nudge.x + shift.x;
+                const offsetY = sourceTile.wallDecoration.offsetY + nudge.y + shift.y;
+
                 if (sourceTile.wallDecoration.entity0 instanceof Model) {
                     locs.push(
                         createSceneModel(
@@ -407,8 +457,8 @@ export function getSceneLocs(
                             scene,
                             sourceTile.wallDecoration.entity1,
                             sourceTile.wallDecoration,
-                            sceneOffset,
-                            sceneOffset,
+                            shift.x + sceneOffset,
+                            shift.y + sceneOffset,
                             renderLevel,
                             tileX,
                             tileY,
@@ -422,8 +472,8 @@ export function getSceneLocs(
                             locTypeLoader,
                             sourceTile.wallDecoration.entity1,
                             sourceTile.wallDecoration,
-                            sceneOffset,
-                            sceneOffset,
+                            shift.x + sceneOffset,
+                            shift.y + sceneOffset,
                             renderLevel,
                             10,
                             planeCullLevel,

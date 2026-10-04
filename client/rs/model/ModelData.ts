@@ -165,7 +165,7 @@ export class ModelData extends Entity {
             if (normal1.magnitude === 0) {
                 continue;
             }
-            const key = `${model1.verticesX[v1]},${verticesY1[v1]},${model1.verticesZ[v1]}`;
+            const key = `${model1.verticesX[v1]},${model1.verticesZ[v1]}`;
             let indices = vertexMap.get(key);
             if (!indices) {
                 indices = [];
@@ -180,7 +180,7 @@ export class ModelData extends Entity {
                 continue;
             }
             const y = verticesY0[v0] - offsetY;
-            if (y > model1.minHeight) {
+            if (y > model1.minHeight + 2) {
                 continue;
             }
             const x = model0.verticesX[v0] - offsetX;
@@ -193,13 +193,16 @@ export class ModelData extends Entity {
             }
 
             // OPTIMIZATION: Hash lookup instead of nested loop
-            const key = `${x},${y},${z}`;
+            const key = `${x},${z}`;
             const matchingIndices = vertexMap.get(key);
             if (!matchingIndices) {
                 continue;
             }
 
             for (const v1 of matchingIndices) {
+                if (Math.abs(y - verticesY1[v1]) > 2) {
+                    continue;
+                }
                 const normal1 = model1.normals[v1];
 
                 if (!model0.mergedNormals) {
