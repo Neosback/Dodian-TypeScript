@@ -12,15 +12,17 @@ import {
     ContourGroundType,
     type DrawCommand,
     type ModelInfo,
-    SceneBuffer,
     createModelInfoTextureData,
     getModelFacesFiltered,
 } from "../buffer/SceneBuffer";
+import { ExactFacePrioritySceneBuffer } from "../priority/ExactFacePrioritySceneBuffer";
 import { recordGroundItemGeometrySnapshot } from "./GroundItemGeometrySnapshot";
 
 export type GroundItemGeometryBuildData = {
     vertices: Uint8Array;
     indices: Int32Array;
+    facePriorities: Uint8Array;
+    facePriorityModelSpans: Uint32Array;
     drawRanges: DrawRange[];
     drawRangesAlpha: DrawRange[];
     drawRangesLod: DrawRange[];
@@ -115,7 +117,11 @@ export function buildGroundItemGeometry(
         return finish(undefined);
     }
 
-    const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, filtered.length * 64);
+    const sceneBuf = new ExactFacePrioritySceneBuffer(
+        textureLoader,
+        textureIdIndexMap,
+        filtered.length * 64,
+    );
     const mapBaseX = map.mapX * Scene.MAP_SQUARE_SIZE;
     const mapBaseY = map.mapY * Scene.MAP_SQUARE_SIZE;
 
@@ -212,6 +218,8 @@ export function buildGroundItemGeometry(
     return finish({
         vertices: sceneBuf.vertexBuf.byteArray(),
         indices: new Int32Array(sceneBuf.indices),
+        facePriorities: sceneBuf.toExactFacePriorityArray(),
+        facePriorityModelSpans: sceneBuf.toExactFacePriorityModelSpans(),
         drawRanges,
         drawRangesAlpha,
         drawRangesLod,
