@@ -26,6 +26,8 @@ const interactLodAlpha = modelData(80);
 const mapData = {
     doorVertices: new Uint8Array(24),
     doorIndices: new Int32Array([0, 1, 2, 0, 2, 3]),
+    doorFacePriorities: new Uint8Array([1, 11]),
+    doorFacePriorityModelSpans: new Uint32Array([0, 3, 3, 3]),
     doorModelTextureData: opaque,
     doorModelTextureDataAlpha: alpha,
     doorModelTextureDataLod: lod,
@@ -55,6 +57,8 @@ const mapData = {
 const geometry = createWebGPUStaticDoorGeometryData(mapData);
 assert.equal(geometry.vertices, mapData.doorVertices);
 assert.equal(geometry.indices, mapData.doorIndices);
+assert.equal(geometry.facePriorities, mapData.doorFacePriorities);
+assert.equal(geometry.facePriorityModelSpans, mapData.doorFacePriorityModelSpans);
 assert.equal(geometry.modelTextureData, opaque);
 assert.equal(geometry.modelTextureDataAlpha, alpha);
 assert.equal(geometry.modelTextureDataLod, lod);
