@@ -42,6 +42,7 @@ export interface WebGPUTerrainDrawPlan {
     mapY: number;
     renderPosX: number;
     renderPosY: number;
+    borderSize: number;
     draws: WebGPUTerrainDrawPlanEntry[];
     alphaDraws: WebGPUTerrainDrawPlanEntry[];
     lodDraws: WebGPUTerrainDrawPlanEntry[];
@@ -130,6 +131,7 @@ export function createWebGPUTerrainDrawPlan(
         mapY: data.mapY | 0,
         renderPosX: data.renderPosX ?? data.mapX,
         renderPosY: data.renderPosY ?? data.mapY,
+        borderSize: data.borderSize | 0,
         draws,
         alphaDraws,
         lodDraws,
