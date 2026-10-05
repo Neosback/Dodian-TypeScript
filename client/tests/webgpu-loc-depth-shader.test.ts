@@ -69,8 +69,8 @@ assert.match(
 );
 assert.match(patched, /output\.position = vec4<f32>\(2\.0, 2\.0, 2\.0, 1\.0\);/);
 
-// Wall types 1/3 stay explicitly outside the cardinal approximation until the
-// delayed-wall 16/32/64/128 painter path is implemented.
+// Wall types 1/3 stay explicitly outside the cardinal approximation because
+// delayed-wall 16/32/64/128 ordering is handled by the CPU draw scheduler.
 assert.match(patched, /Types 1\/3 use the software client's separate diagonal/);
 
 // Existing world-entity transform behavior remains composed with the new rules.
@@ -81,10 +81,17 @@ assert.equal(
     2,
 );
 
-// The temporary face-priority bias is intentionally still present. Full 0..11
-// ordering is the next checkpoint rather than being silently approximated here.
-assert.match(patched, /let facePriority = \(input\.packed\.z >> 6u\) & 0x7u;/);
-assert.match(patched, /viewPos\.z \+= f32\(facePriority\) \* 0\.001;/);
+// Exact 0..11 face priority is now expressed by triangle/index order. The old
+// compressed 3-bit per-face view-space nudge must be gone from the patched WGSL.
+assert.equal(
+    patched.includes("let facePriority = (input.packed.z >> 6u) & 0x7u;"),
+    false,
+);
+assert.equal(
+    patched.includes("viewPos.z += f32(facePriority) * 0.001;"),
+    false,
+);
+assert.match(patched, /Exact 0\.\.11 face priority is expressed by triangle\/index order/);
 
 assert.throws(
     () =>
@@ -97,4 +104,4 @@ assert.throws(
     /loc depth-ordering contract changed/,
 );
 
-console.log("webgpu loc wall/decor depth shader contract checks passed");
+console.log("webgpu loc wall/decor and exact-priority shader contract checks passed");
