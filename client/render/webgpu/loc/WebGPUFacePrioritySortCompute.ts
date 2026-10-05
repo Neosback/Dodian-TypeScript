@@ -12,6 +12,7 @@ import type {
     WebGPUFacePriorityDepthDrawLike,
     WebGPUFacePriorityDepthJobBatch,
     WebGPUFacePriorityDepthComputeResources,
+    WebGPUFacePriorityVisibilityState,
 } from "./WebGPUFacePriorityDepthCompute";
 import type { WebGPUFacePriorityModelSpan } from "./WebGPUFacePrioritySortResources";
 
@@ -174,6 +175,44 @@ export function createWebGPUFacePriorityAnalyticOrder(
     return output;
 }
 
+/**
+ * CPU mirror of the visibility-aware GPU output layout. Visible faces receive
+ * exact painter order; rejected faces remain in a deterministic source-stable
+ * tail so the render draw count can stay unchanged while those tail entries are
+ * encoded as degenerate triangles by the GPU sorter.
+ */
+export function createWebGPUFacePriorityVisibilityAwareOrder(
+    depths: ArrayLike<number>,
+    priorities: ArrayLike<number>,
+    visibility: ArrayLike<number | boolean>,
+): number[] {
+    if (depths.length !== priorities.length || depths.length !== visibility.length) {
+        throw new Error(
+            `Face visibility/depth/priority length mismatch: ${visibility.length}/${depths.length}/${priorities.length}`,
+        );
+    }
+
+    const visibleSourceFaces: number[] = [];
+    const hiddenSourceFaces: number[] = [];
+    const visibleDepths: number[] = [];
+    const visiblePriorities: number[] = [];
+    for (let face = 0; face < depths.length; face++) {
+        if (visibility[face]) {
+            visibleSourceFaces.push(face);
+            visibleDepths.push(Number(depths[face]));
+            visiblePriorities.push(Number(priorities[face]));
+        } else {
+            hiddenSourceFaces.push(face);
+        }
+    }
+
+    const visibleOrder = createWebGPUFacePriorityAnalyticOrder(
+        visibleDepths,
+        visiblePriorities,
+    ).map((visibleFace) => visibleSourceFaces[visibleFace]);
+    return visibleOrder.concat(hiddenSourceFaces);
+}
+
 export function createWebGPUFacePrioritySortMetadata(
     batch: WebGPUFacePriorityDepthJobBatch,
 ): WebGPUFacePrioritySortMetadata {
@@ -220,7 +259,7 @@ export function createWebGPUFacePrioritySortMetadata(
 }
 
 /**
- * Build the dense sorted-index ranges that Checkpoint 4 can bind for rendering.
+ * Build the dense sorted-index ranges that the static-scene renderer binds.
  * Duplicate source draws intentionally receive different output ranges.
  */
 export function createWebGPUFacePrioritySortedDrawRanges(
@@ -286,7 +325,8 @@ export function createWebGPUFacePrioritySortedDrawRanges(
 export const WEBGPU_FACE_PRIORITY_SORT_SHADER = /* wgsl */ `
 struct SortUniforms {
     workItemCount: u32,
-    _padding: vec3<u32>,
+    visibilityEnabled: u32,
+    _padding: vec2<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> depthWorkItems: array<vec2<u32>>;
@@ -297,6 +337,7 @@ struct SortUniforms {
 @group(0) @binding(5) var<storage, read> sourceIndices: array<u32>;
 @group(0) @binding(6) var<storage, read_write> sortedIndices: array<u32>;
 @group(0) @binding(7) var<uniform> uniforms: SortUniforms;
+@group(0) @binding(8) var<storage, read> faceVisibility: array<u32>;
 
 fn workPriority(workItem: u32) -> u32 {
     return facePriorities[depthWorkItems[workItem].x];
@@ -306,12 +347,16 @@ fn workDepth(workItem: u32) -> i32 {
     return i32(faceDepths[workItem]);
 }
 
+fn workVisible(workItem: u32) -> bool {
+    return uniforms.visibilityEnabled == 0u || faceVisibility[workItem] != 0u;
+}
+
 fn specialPrefixAbove(firstWorkItem: u32, faceCount: u32, count10: u32, threshold: i32) -> u32 {
     var above10 = 0u;
     var above11 = 0u;
     for (var localFace = 0u; localFace < faceCount; localFace = localFace + 1u) {
         let workItem = firstWorkItem + localFace;
-        if (workDepth(workItem) <= threshold) {
+        if (!workVisible(workItem) || workDepth(workItem) <= threshold) {
             continue;
         }
         let priority = workPriority(workItem);
@@ -342,10 +387,13 @@ fn csFacePrioritySort(@builtin(global_invocation_id) id: vec3<u32>) {
     let sourceFace = depthWorkItems[id.x].x;
     let priority = facePriorities[sourceFace];
     let depth = workDepth(id.x);
+    let visible = workVisible(id.x);
 
     var counts: array<u32, 12>;
     var sums: array<i32, 10>;
     var bucketRank = 0u;
+    var visibleCount = 0u;
+    var hiddenBefore = 0u;
 
     for (var p = 0u; p < 12u; p = p + 1u) {
         counts[p] = 0u;
@@ -356,6 +404,14 @@ fn csFacePrioritySort(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var otherLocal = 0u; otherLocal < faceCount; otherLocal = otherLocal + 1u) {
         let otherWorkItem = firstWorkItem + otherLocal;
+        if (!workVisible(otherWorkItem)) {
+            if (otherLocal < localFace) {
+                hiddenBefore = hiddenBefore + 1u;
+            }
+            continue;
+        }
+
+        visibleCount = visibleCount + 1u;
         let otherPriority = workPriority(otherWorkItem);
         let otherDepth = workDepth(otherWorkItem);
         counts[otherPriority] = counts[otherPriority] + 1u;
@@ -363,11 +419,22 @@ fn csFacePrioritySort(@builtin(global_invocation_id) id: vec3<u32>) {
             sums[otherPriority] = sums[otherPriority] + otherDepth;
         }
         if (
+            visible &&
             otherPriority == priority &&
             (otherDepth > depth || (otherDepth == depth && otherLocal < localFace))
         ) {
             bucketRank = bucketRank + 1u;
         }
+    }
+
+    let sourceIndexBase = sourceFace * 3u;
+    if (!visible) {
+        let targetIndexBase = (firstWorkItem + visibleCount + hiddenBefore) * 3u;
+        let degenerateIndex = sourceIndices[sourceIndexBase];
+        sortedIndices[targetIndexBase] = degenerateIndex;
+        sortedIndices[targetIndexBase + 1u] = degenerateIndex;
+        sortedIndices[targetIndexBase + 2u] = degenerateIndex;
+        return;
     }
 
     var threshold12 = 0;
@@ -430,7 +497,6 @@ fn csFacePrioritySort(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    let sourceIndexBase = sourceFace * 3u;
     let targetIndexBase = (firstWorkItem + finalRank) * 3u;
     sortedIndices[targetIndexBase] = sourceIndices[sourceIndexBase];
     sortedIndices[targetIndexBase + 1u] = sourceIndices[sourceIndexBase + 1u];
@@ -464,6 +530,7 @@ function getSharedSortPipeline(device: WebGPUDeviceLike): SharedSortPipeline {
             { binding: 5, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 6, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "storage" } },
             { binding: 7, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "uniform" } },
+            { binding: 8, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "read-only-storage" } },
         ],
     });
     const layout = device.createPipelineLayout({
@@ -493,6 +560,7 @@ export class WebGPUFacePrioritySortComputeResources {
 
     private workItemCount = 0;
     private readonly shared: SharedSortPipeline;
+    private readonly visibilityEnabled: boolean;
 
     constructor(
         private readonly device: WebGPUDeviceLike,
@@ -503,11 +571,13 @@ export class WebGPUFacePrioritySortComputeResources {
         faceDepthBuffer: WebGPUBufferLike,
         priorityBuffer: WebGPUBufferLike,
         sourceIndexBuffer: WebGPUBufferLike,
+        faceVisibilityBuffer?: WebGPUBufferLike,
     ) {
         if (maxWorkItems < 0 || maxModelJobs < 0) {
             throw new RangeError("Face-priority sort capacities must be non-negative");
         }
         this.shared = getSharedSortPipeline(device);
+        this.visibilityEnabled = faceVisibilityBuffer !== undefined;
         this.sortWorkItemBuffer = device.createBuffer({
             label: `${labelPrefix}-face-priority-sort-work-items`,
             size: Math.max(8, maxWorkItems * 8),
@@ -540,6 +610,10 @@ export class WebGPUFacePrioritySortComputeResources {
                 { binding: 5, resource: { buffer: sourceIndexBuffer } },
                 { binding: 6, resource: { buffer: this.sortedIndexBuffer } },
                 { binding: 7, resource: { buffer: this.uniformBuffer } },
+                {
+                    binding: 8,
+                    resource: { buffer: faceVisibilityBuffer ?? depthWorkItemBuffer },
+                },
             ],
         });
     }
@@ -566,6 +640,7 @@ export class WebGPUFacePrioritySortComputeResources {
         }
         const uniformData = new Uint32Array(4);
         uniformData[0] = workItemCount;
+        uniformData[1] = this.visibilityEnabled ? 1 : 0;
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
         return workItemCount;
     }
@@ -609,8 +684,9 @@ export function prepareWebGPUFacePriorityDepthAndSort(
     batch: WebGPUFacePriorityDepthJobBatch,
     transform: ArrayLike<number>,
     borderSize: number,
+    visibilityState?: WebGPUFacePriorityVisibilityState,
 ): number {
-    const depthCount = depth.prepare(batch, transform, borderSize);
+    const depthCount = depth.prepare(batch, transform, borderSize, visibilityState);
     const sortCount = sort.prepare(batch);
     if (depthCount !== sortCount) {
         throw new Error(
