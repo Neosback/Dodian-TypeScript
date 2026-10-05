@@ -21,6 +21,8 @@ function modelData(seed: number): Uint16Array {
 const data: GroundItemGeometryBuildData = {
     vertices: new Uint8Array(24),
     indices: new Int32Array([0, 1, 2, 0, 2, 3]),
+    facePriorities: new Uint8Array([2, 10]),
+    facePriorityModelSpans: new Uint32Array([0, 3, 3, 3]),
     drawRanges: [[0, 3, 1]],
     drawRangesAlpha: [[12, 3, 1]],
     drawRangesLod: [[0, 3, 1]],
@@ -53,6 +55,8 @@ const data: GroundItemGeometryBuildData = {
 const geometry = createWebGPUStaticGroundItemGeometryData(data);
 assert.equal(geometry.vertices, data.vertices);
 assert.equal(geometry.indices, data.indices);
+assert.equal(geometry.facePriorities, data.facePriorities);
+assert.equal(geometry.facePriorityModelSpans, data.facePriorityModelSpans);
 assert.equal(geometry.modelTextureData, data.modelTextureData);
 assert.equal(geometry.modelTextureDataAlpha, data.modelTextureDataAlpha);
 assert.equal(geometry.modelTextureDataLod, data.modelTextureDataLod);
