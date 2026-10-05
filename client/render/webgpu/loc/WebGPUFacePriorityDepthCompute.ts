@@ -14,9 +14,16 @@ import type {
 } from "./WebGPUFacePrioritySortResources";
 
 export const WEBGPU_FACE_PRIORITY_DEPTH_WORKGROUP_SIZE = 64;
-export const WEBGPU_FACE_PRIORITY_DEPTH_UNIFORM_BYTES = 80;
+export const WEBGPU_FACE_PRIORITY_DEPTH_UNIFORM_BYTES = 160;
 
 export type FacePriorityDepthTransform = ArrayLike<number>;
+
+export interface WebGPUFacePriorityVisibilityState {
+    projectionMatrix: ArrayLike<number>;
+    mapX: number;
+    mapY: number;
+    cullBackFace: boolean;
+}
 
 export interface WebGPUFacePriorityDepthDrawLike {
     firstIndex: number;
@@ -37,9 +44,16 @@ export interface WebGPUFacePriorityDepthModelJob {
 export interface WebGPUFacePriorityDepthJobBatch {
     /** `[sourceFace, firstInstance]` pairs, one pair per compute invocation. */
     workItems: Uint32Array;
-    /** Model-local ranges into `workItems`; retained for Checkpoint 3 sorting. */
+    /** Model-local ranges into `workItems`; retained for exact sorting. */
     modelJobs: WebGPUFacePriorityDepthModelJob[];
 }
+
+const IDENTITY_MATRIX = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+]);
 
 function assertDepthTransform(transform: FacePriorityDepthTransform): void {
     if (transform.length < 16) {
@@ -118,14 +132,7 @@ export function computeWebGPUFacePriorityDepth(
     );
 }
 
-/**
- * Expand visible draw/model spans into an instance-aware depth work stream.
- *
- * Source faces are intentionally allowed to appear more than once. Animated
- * locs can reuse one frame span at multiple placements, and VERTEX contouring
- * can deform those instances differently. A dense work stream preserves those
- * independent depth results instead of incorrectly sharing `depth[sourceFace]`.
- */
+/** Expand submitted draw/model spans into an instance-aware work stream. */
 export function createWebGPUFacePriorityDepthJobs(
     draws: readonly WebGPUFacePriorityDepthDrawLike[],
     modelSpans: readonly WebGPUFacePriorityModelSpan[],
@@ -181,7 +188,11 @@ struct FaceDepthUniforms {
     transform: mat4x4<f32>,
     workItemCount: u32,
     borderSize: i32,
-    _padding: vec2<u32>,
+    cullBackFace: u32,
+    _padding0: u32,
+    projectionMatrix: mat4x4<f32>,
+    mapPos: vec2<f32>,
+    _padding1: vec2<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> packedVertexWords: array<u32>;
@@ -191,6 +202,7 @@ struct FaceDepthUniforms {
 @group(0) @binding(4) var locHeightMap: texture_2d_array<i32>;
 @group(0) @binding(5) var<storage, read> locModelInfos: LocModelInfoBuffer;
 @group(0) @binding(6) var<uniform> uniforms: FaceDepthUniforms;
+@group(0) @binding(7) var<storage, read_write> faceVisibility: array<u32>;
 
 fn decodePackedPosition(vertexIndex: u32) -> vec3<f32> {
     let base = vertexIndex * 3u;
@@ -246,11 +258,6 @@ fn depthPosition(vertexIndex: u32, instanceIndex: u32) -> vec3<f32> {
     var position = decodePackedPosition(vertexIndex);
     let info = locModelInfos.data[instanceIndex];
     let contourGround = (info.y >> 14u) & 0x3u;
-
-    // CENTER_TILE contour, model height, placement, map position, camera
-    // translation, and model radius are constant for the whole model and cancel
-    // from its face ordering. VERTEX contour is the one placement term that can
-    // change relative face depths and must be applied here.
     if (contourGround == 1u) {
         let tilePos = vec2<f32>(
             f32(info.x & 0x3fffu),
@@ -262,8 +269,53 @@ fn depthPosition(vertexIndex: u32, instanceIndex: u32) -> vec3<f32> {
     return position;
 }
 
+fn worldPosition(vertexIndex: u32, instanceIndex: u32) -> vec3<f32> {
+    var position = decodePackedPosition(vertexIndex);
+    let info = locModelInfos.data[instanceIndex];
+    let tilePos = vec2<f32>(
+        f32(info.x & 0x3fffu),
+        f32(info.y & 0x3fffu),
+    );
+    let plane = (info.x >> 14u) & 0x3u;
+    let contourGround = (info.y >> 14u) & 0x3u;
+    let height = f32(info.z >> 8u) * 8.0;
+
+    var interpPos = tilePos;
+    if (contourGround == 1u) {
+        interpPos = position.xz + tilePos;
+    }
+    position += vec3<f32>(tilePos.x, 0.0, tilePos.y);
+    position.y -= height;
+    if (contourGround < 2u) {
+        position.y -= getLocHeightInterp(interpPos, plane);
+    }
+
+    return position / 128.0 + vec3<f32>(uniforms.mapPos.x * 64.0, 0.0, uniforms.mapPos.y * 64.0);
+}
+
 fn relativeDepth(position: vec3<f32>) -> f32 {
     return (uniforms.transform * vec4<f32>(position, 0.0)).z;
+}
+
+fn projectedPosition(position: vec3<f32>) -> vec4<f32> {
+    return uniforms.projectionMatrix * (uniforms.transform * vec4<f32>(position, 1.0));
+}
+
+fn projectedFrontFacing(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> bool {
+    if (uniforms.cullBackFace == 0u) {
+        return true;
+    }
+    let ca = projectedPosition(a);
+    let cb = projectedPosition(b);
+    let cc = projectedPosition(c);
+    if (ca.w <= 0.0 || cb.w <= 0.0 || cc.w <= 0.0) {
+        return false;
+    }
+    let pa = ca.xy / ca.w;
+    let pb = cb.xy / cb.w;
+    let pc = cc.xy / cc.w;
+    let winding = (pa.x - pb.x) * (pc.y - pb.y) - (pc.x - pb.x) * (pa.y - pb.y);
+    return winding > 0.0;
 }
 
 @compute @workgroup_size(${WEBGPU_FACE_PRIORITY_DEPTH_WORKGROUP_SIZE})
@@ -275,10 +327,24 @@ fn csFaceDepth(@builtin(global_invocation_id) id: vec3<u32>) {
     let sourceFace = job.x;
     let instanceIndex = job.y;
     let indexBase = sourceFace * 3u;
-    let a = depthPosition(sourceIndices[indexBase], instanceIndex);
-    let b = depthPosition(sourceIndices[indexBase + 1u], instanceIndex);
-    let c = depthPosition(sourceIndices[indexBase + 2u], instanceIndex);
+    let ia = sourceIndices[indexBase];
+    let ib = sourceIndices[indexBase + 1u];
+    let ic = sourceIndices[indexBase + 2u];
+
+    let a = depthPosition(ia, instanceIndex);
+    let b = depthPosition(ib, instanceIndex);
+    let c = depthPosition(ic, instanceIndex);
     faceDepths[id.x] = trunc((relativeDepth(a) + relativeDepth(b) + relativeDepth(c)) / 3.0);
+
+    faceVisibility[id.x] = select(
+        0u,
+        1u,
+        projectedFrontFacing(
+            worldPosition(ia, instanceIndex),
+            worldPosition(ib, instanceIndex),
+            worldPosition(ic, instanceIndex),
+        ),
+    );
 }
 `;
 
@@ -311,6 +377,7 @@ function getSharedDepthPipeline(device: WebGPUDeviceLike): SharedDepthPipeline {
             },
             { binding: 5, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 6, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "uniform" } },
+            { binding: 7, visibility: WEBGPU_SHADER_STAGE.COMPUTE, buffer: { type: "storage" } },
         ],
     });
     const layout = device.createPipelineLayout({
@@ -362,20 +429,11 @@ function createPackedVertexWords(vertices: Uint8Array): Uint32Array {
     return words;
 }
 
-/**
- * Per-pass depth-compute resources. `maxWorkItems` is the maximum number of
- * face references submitted by that pass, not the number of unique source
- * faces, because animated instances are intentionally allowed to duplicate a
- * source span with different contouring.
- *
- * This class remains disconnected from the render loop in Checkpoint 2. The
- * next checkpoint will schedule depth -> exact sort before any priority index
- * source is activated.
- */
 export class WebGPUFacePriorityDepthComputeResources {
     readonly packedVertexBuffer: WebGPUBufferLike;
     readonly workItemBuffer: WebGPUBufferLike;
     readonly faceDepthBuffer: WebGPUBufferLike;
+    readonly faceVisibilityBuffer: WebGPUBufferLike;
     readonly uniformBuffer: WebGPUBufferLike;
     readonly bindGroup: WebGPUBindGroupLike;
 
@@ -409,7 +467,12 @@ export class WebGPUFacePriorityDepthComputeResources {
         this.faceDepthBuffer = device.createBuffer({
             label: `${labelPrefix}-face-priority-depths`,
             size: Math.max(4, maxWorkItems * 4),
-            usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_DST,
+            usage: WEBGPU_BUFFER_USAGE.STORAGE,
+        });
+        this.faceVisibilityBuffer = device.createBuffer({
+            label: `${labelPrefix}-face-priority-visibility`,
+            size: Math.max(4, maxWorkItems * 4),
+            usage: WEBGPU_BUFFER_USAGE.STORAGE,
         });
         this.uniformBuffer = device.createBuffer({
             label: `${labelPrefix}-face-priority-depth-uniforms`,
@@ -427,6 +490,7 @@ export class WebGPUFacePriorityDepthComputeResources {
                 { binding: 4, resource: heightMapView },
                 { binding: 5, resource: { buffer: modelInfoBuffer } },
                 { binding: 6, resource: { buffer: this.uniformBuffer } },
+                { binding: 7, resource: { buffer: this.faceVisibilityBuffer } },
             ],
         });
     }
@@ -435,8 +499,11 @@ export class WebGPUFacePriorityDepthComputeResources {
         batch: WebGPUFacePriorityDepthJobBatch,
         transform: FacePriorityDepthTransform,
         borderSize: number,
+        visibilityState?: WebGPUFacePriorityVisibilityState,
     ): number {
         assertDepthTransform(transform);
+        const projectionMatrix = visibilityState?.projectionMatrix ?? IDENTITY_MATRIX;
+        assertDepthTransform(projectionMatrix);
         const count = batch.workItems.length >>> 1;
         if (count > this.maxWorkItems) {
             throw new Error(
@@ -456,6 +523,12 @@ export class WebGPUFacePriorityDepthComputeResources {
         const words = new Uint32Array(uniformData);
         words[16] = count;
         new Int32Array(uniformData)[17] = borderSize | 0;
+        words[18] = visibilityState?.cullBackFace ? 1 : 0;
+        for (let i = 0; i < 16; i++) {
+            floats[20 + i] = projectionMatrix[i];
+        }
+        floats[36] = visibilityState?.mapX ?? 0;
+        floats[37] = visibilityState?.mapY ?? 0;
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
         return count;
     }
@@ -484,6 +557,7 @@ export class WebGPUFacePriorityDepthComputeResources {
         this.packedVertexBuffer.destroy?.();
         this.workItemBuffer.destroy?.();
         this.faceDepthBuffer.destroy?.();
+        this.faceVisibilityBuffer.destroy?.();
         this.uniformBuffer.destroy?.();
         this.workItemCount = 0;
     }
