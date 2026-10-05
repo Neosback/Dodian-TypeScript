@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { Loc } from "../rs/scene/Loc";
 import { Scene } from "../rs/scene/Scene";
 import { EntityType, calculateEntityTag } from "../rs/scene/entity/EntityTag";
 import { LocModelType } from "../rs/config/loctype/LocModelType";
@@ -7,6 +8,7 @@ import { createModelInfoTextureData } from "../render/buffer/SceneBuffer";
 import { resolveLocOrderingAnchorWorldTile } from "../render/loc/LocOrderingMetadata";
 import {
     decodeLocPlacementAnchorTile,
+    decodeLocPlacementFootprint,
     getLocPlacementIdentity,
 } from "../render/loc/LocPlacementMetadata";
 import { createSceneLocEntity, createSceneModel } from "../render/loc/SceneLocs";
@@ -27,14 +29,23 @@ const locTypeLoader = {
         };
     },
 } as any;
-const sceneLoc = {
-    tag: calculateEntityTag(tileX, tileY, EntityType.LOC, false, id),
-    flags: LocModelType.WALL_TRI_CORNER | (rotation << 6),
-    x: tileX * 128 + 64,
-    y: tileY * 128 + 64,
-    height: 0,
-};
 const model = { contourVerticesY: false } as any;
+const tag = calculateEntityTag(tileX, tileY, EntityType.LOC, false, id);
+const flags = LocModelType.WALL_TRI_CORNER | (rotation << 6);
+const sceneLoc = new Loc(
+    tag,
+    flags,
+    0,
+    tileX * 128 + 64,
+    tileY * 128 + 64,
+    0,
+    model,
+    rotation,
+    tileX,
+    tileY,
+    tileX + 2,
+    tileY + 1,
+);
 
 const staticModel = createSceneModel(
     locTypeLoader,
@@ -52,6 +63,10 @@ assert.deepEqual(decodeLocPlacementAnchorTile(staticModel.placementMetadata!), {
     x: tileX,
     y: tileY,
 });
+assert.deepEqual(decodeLocPlacementFootprint(staticModel.placementFootprint!), {
+    sizeX: 3,
+    sizeY: 2,
+});
 
 const dynamicModel = createSceneLocEntity(
     locTypeLoader,
@@ -68,12 +83,41 @@ assert.deepEqual(decodeLocPlacementAnchorTile(dynamicModel.placementMetadata!), 
     x: tileX,
     y: tileY,
 });
+assert.deepEqual(decodeLocPlacementFootprint(dynamicModel.placementFootprint!), {
+    sizeX: 3,
+    sizeY: 2,
+});
 assert.equal(
     getLocPlacementIdentity(dynamicModel.placementMetadata!),
     getLocPlacementIdentity(staticModel.placementMetadata!),
 );
 
-// Exercise the actual production ModelInfo -> trailer -> WebGPU CPU-plan bridge.
+// Wall/decor SceneLoc records are anchored to one tile rather than Loc spans.
+const wallSceneLoc = {
+    tag,
+    flags,
+    x: tileX * 128 + 64,
+    y: tileY * 128 + 64,
+    height: 0,
+};
+const wallModel = createSceneModel(
+    locTypeLoader,
+    scene,
+    model,
+    wallSceneLoc,
+    0,
+    0,
+    0,
+    tileX,
+    tileY,
+    1,
+);
+assert.deepEqual(decodeLocPlacementFootprint(wallModel.placementFootprint!), {
+    sizeX: 1,
+    sizeY: 1,
+});
+
+// Exercise the actual production ModelInfo -> v3 trailer -> WebGPU CPU-plan bridge.
 const modelData = createModelInfoTextureData([
     {
         offset: 0,
@@ -87,6 +131,10 @@ assert.deepEqual(decodeLocPlacementAnchorTile(plan.placementMetadata[0]), {
     y: tileY,
 });
 assert.deepEqual(Array.from(plan.orderingAnchorTiles), [tileX, tileY]);
+assert.deepEqual(decodeLocPlacementFootprint(plan.orderingFootprints[0]), {
+    sizeX: 3,
+    sizeY: 2,
+});
 
 // Scene anchors include the loader border. Renderer camera positions are world
 // tiles, so the pass resolves the local anchor through the map render position.
@@ -95,4 +143,4 @@ assert.deepEqual(
     { x: 50 * 64, y: 60 * 64 + 63 },
 );
 
-console.log("production loc placement anchor checks passed");
+console.log("production loc placement anchor and footprint checks passed");
