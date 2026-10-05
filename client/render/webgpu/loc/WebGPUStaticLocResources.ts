@@ -2,7 +2,9 @@ import type { DrawRange } from "../../DrawRange";
 import type { LocGeometryData } from "../../loader/SdMapData";
 import { createLocOrderingAnchorTiles } from "../../loc/LocOrderingMetadata";
 import {
+    LOC_PLACEMENT_FOOTPRINT_NONE,
     LOC_PLACEMENT_NONE,
+    LOC_PLACEMENT_TRAILER_ANCHOR_VERSION,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
     LOC_PLACEMENT_TRAILER_LEGACY_VERSION,
     LOC_PLACEMENT_TRAILER_MAGIC,
@@ -40,6 +42,8 @@ export interface WebGPUStaticLocPlan {
     placementMetadata: Uint32Array;
     /** Decoded x/y ordering anchors parallel to model-info instances, with -1 sentinels. */
     orderingAnchorTiles: Int16Array;
+    /** Packed sizeX/sizeY footprints parallel to model-info instances. */
+    orderingFootprints: Uint16Array;
 }
 
 export type WebGPUStaticLocGeometryData = Pick<
@@ -62,6 +66,8 @@ export interface WebGPUStaticLocPassResources {
     readonly placementMetadata: Uint32Array;
     /** CPU-side x/y anchors indexed by model-info instance. */
     readonly orderingAnchorTiles: Int16Array;
+    /** CPU-side packed sizeX/sizeY footprints indexed by model-info instance. */
+    readonly orderingFootprints: Uint16Array;
 }
 
 export interface WebGPUAnimatedLocState {
@@ -105,23 +111,31 @@ function createUploadedBuffer(
     return buffer;
 }
 
+type PlacementTrailerData = {
+    metadata: Uint32Array;
+    footprints: Uint16Array;
+};
+
 function readPlacementMetadataTrailer(
     modelData: Uint16Array,
     drawCount: number,
     instanceCount: number,
-): Uint32Array {
+): PlacementTrailerData {
     const metadata = new Uint32Array(instanceCount);
     metadata.fill(LOC_PLACEMENT_NONE);
+    const footprints = new Uint16Array(instanceCount);
+    footprints.fill(LOC_PLACEMENT_FOOTPRINT_NONE);
 
     const trailerOffset = getLocPlacementTrailerWordOffset(drawCount, instanceCount);
     const headerEnd = trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS;
     if (modelData.length < headerEnd || modelData[trailerOffset] !== LOC_PLACEMENT_TRAILER_MAGIC) {
-        return metadata;
+        return { metadata, footprints };
     }
 
     const version = modelData[trailerOffset + 1] | 0;
     const isLegacyVersion = version === LOC_PLACEMENT_TRAILER_LEGACY_VERSION;
-    if (!isLegacyVersion && version !== LOC_PLACEMENT_TRAILER_VERSION) {
+    const isAnchorVersion = version === LOC_PLACEMENT_TRAILER_ANCHOR_VERSION;
+    if (!isLegacyVersion && !isAnchorVersion && version !== LOC_PLACEMENT_TRAILER_VERSION) {
         throw new Error(`Unsupported loc placement metadata trailer version ${version}`);
     }
 
@@ -134,7 +148,7 @@ function readPlacementMetadataTrailer(
         );
     }
 
-    const wordsPerInstance = isLegacyVersion ? 1 : LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
+    const wordsPerInstance = isLegacyVersion ? 1 : isAnchorVersion ? 2 : LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
     const metadataEnd = headerEnd + encodedInstanceCount * wordsPerInstance;
     if (modelData.length < metadataEnd) {
         throw new Error(
@@ -143,17 +157,20 @@ function readPlacementMetadataTrailer(
     }
 
     for (let i = 0; i < instanceCount; i++) {
+        const payloadOffset = headerEnd + i * wordsPerInstance;
         if (isLegacyVersion) {
-            metadata[i] = modelData[headerEnd + i];
+            metadata[i] = modelData[payloadOffset];
             continue;
         }
-        const payloadOffset = headerEnd + i * LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
         metadata[i] = combineLocPlacementMetadata(
             modelData[payloadOffset],
             modelData[payloadOffset + 1],
         );
+        if (!isAnchorVersion) {
+            footprints[i] = modelData[payloadOffset + 2];
+        }
     }
-    return metadata;
+    return { metadata, footprints };
 }
 
 export function createWebGPUStaticLocPlanFromData(
@@ -214,7 +231,9 @@ export function createWebGPUStaticLocPlanFromData(
         );
     }
 
-    const placementMetadata = readPlacementMetadataTrailer(modelData, drawCount, maxInstance);
+    const trailer = readPlacementMetadataTrailer(modelData, drawCount, maxInstance);
+    const placementMetadata = trailer.metadata;
+    const orderingFootprints = trailer.footprints;
     const orderingAnchorTiles = createLocOrderingAnchorTiles(placementMetadata);
     const modelInfoWords = new Uint32Array(Math.max(4, maxInstance * 4));
     for (let i = 0; i < maxInstance; i++) {
@@ -230,7 +249,14 @@ export function createWebGPUStaticLocPlanFromData(
             (lowWord & 0xffff) | ((encodedPlacement & 0xffff) << 16);
     }
 
-    return { draws, sourceIndices, modelInfoWords, placementMetadata, orderingAnchorTiles };
+    return {
+        draws,
+        sourceIndices,
+        modelInfoWords,
+        placementMetadata,
+        orderingAnchorTiles,
+        orderingFootprints,
+    };
 }
 
 export function createWebGPUStaticLocPlan(
@@ -290,6 +316,7 @@ function createPassResources(
         drawsBySourceIndex,
         placementMetadata: plan.placementMetadata,
         orderingAnchorTiles: plan.orderingAnchorTiles,
+        orderingFootprints: plan.orderingFootprints,
     };
 }
 
