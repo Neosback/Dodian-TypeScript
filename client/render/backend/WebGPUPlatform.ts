@@ -60,6 +60,7 @@ export interface WebGPUPipelineLayoutLike {}
 export interface WebGPUBindGroupLike {}
 export interface WebGPUSamplerLike {}
 export interface WebGPURenderPipelineLike {}
+export interface WebGPUComputePipelineLike {}
 export interface WebGPUCommandBufferLike {}
 
 export interface WebGPURenderPassEncoderLike {
@@ -91,8 +92,16 @@ export interface WebGPURenderPassEncoderLike {
     end(): void;
 }
 
+export interface WebGPUComputePassEncoderLike {
+    setPipeline(pipeline: WebGPUComputePipelineLike): void;
+    setBindGroup(index: number, bindGroup: WebGPUBindGroupLike): void;
+    dispatchWorkgroups(x: number, y?: number, z?: number): void;
+    end(): void;
+}
+
 export interface WebGPUCommandEncoderLike {
     beginRenderPass(descriptor: Record<string, unknown>): WebGPURenderPassEncoderLike;
+    beginComputePass(descriptor?: Record<string, unknown>): WebGPUComputePassEncoderLike;
     finish(): WebGPUCommandBufferLike;
 }
 
@@ -142,6 +151,7 @@ export interface WebGPUDeviceLike {
     createBindGroup(descriptor: Record<string, unknown>): WebGPUBindGroupLike;
     createSampler(descriptor?: Record<string, unknown>): WebGPUSamplerLike;
     createRenderPipeline(descriptor: Record<string, unknown>): WebGPURenderPipelineLike;
+    createComputePipeline(descriptor: Record<string, unknown>): WebGPUComputePipelineLike;
     createCommandEncoder(descriptor?: Record<string, unknown>): WebGPUCommandEncoderLike;
     addEventListener?(
         type: "uncapturederror",
