@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
+import { installWebGPUPlayerAlphaComparison } from "../render/webgpu/player/WebGPUPlayerAlphaComparison";
 import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
 import { installWebGPUPlayerOpaqueComparison } from "../render/webgpu/player/WebGPUPlayerOpaqueComparison";
 import { installWebGPUPlayerOpaquePassBoundaryGuard } from "../render/webgpu/player/WebGPUPlayerOpaquePassBoundary";
@@ -21,6 +22,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         let active = true;
         let restorePlayerComparison: (() => void) | undefined;
         let restorePlayerCaptureBoundary: (() => void) | undefined;
+        let restorePlayerAlphaComparison: (() => void) | undefined;
         host.appendChild(renderer.canvas);
         renderer.attachResizeObserver();
         requestAnimationFrame(() => renderer.forceResize());
@@ -30,6 +32,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             installWebGPUPlayerOpaquePassBoundaryGuard();
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
             restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
+            restorePlayerAlphaComparison = installWebGPUPlayerAlphaComparison(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
                 host.appendChild(comparisonCanvas);
@@ -39,6 +42,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
 
         return () => {
             active = false;
+            restorePlayerAlphaComparison?.();
+            restorePlayerAlphaComparison = undefined;
             restorePlayerCaptureBoundary?.();
             restorePlayerCaptureBoundary = undefined;
             restorePlayerComparison?.();
