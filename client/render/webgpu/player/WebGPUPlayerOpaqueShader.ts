@@ -2,6 +2,8 @@ export const WEBGPU_PLAYER_OPAQUE_SHADER = /* wgsl */ `
 const TEXTURE_SIZE: u32 = 128u;
 const TEXTURE_ANIM_UNIT: f32 = 1.0 / 128.0;
 const RS_TO_RADIANS: f32 = 0.0030679615757712823;
+const PRIORITY_LAYER_EPSILON: f32 = 0.015;
+const TOP_PRIORITY_EXTRA_BIAS: f32 = 0.01;
 
 struct SceneUniforms {
     viewProjMatrix: mat4x4<f32>,
@@ -277,7 +279,11 @@ fn vsPlayerOpaque(input: PlayerVertexInput) -> PlayerVertexOutput {
     let priority = (input.packed.z >> 6u) & 0x7u;
     var depthLayerPos = viewPos;
     if (priority > 0u) {
-        depthLayerPos.z += f32(priority) * 0.001;
+        var layer = f32(priority);
+        if (priority == 7u) {
+            layer += TOP_PRIORITY_EXTRA_BIAS / PRIORITY_LAYER_EPSILON;
+        }
+        depthLayerPos.z += layer * PRIORITY_LAYER_EPSILON;
     }
     let depthLayerClip = scene.projectionMatrix * depthLayerPos;
     var clip = scene.projectionMatrix * viewPos;
