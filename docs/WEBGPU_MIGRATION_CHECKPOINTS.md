@@ -55,11 +55,11 @@ Status: bootstrap infrastructure implemented on this branch.
 - Configure the preferred WebGPU canvas format and explicit alpha mode.
 - Report uncaptured validation errors and device-loss details through callbacks.
 - Add WGSL compilation diagnostics that surface line/column errors before pipeline creation.
-- Do not activate WebGPU as the live renderer until the static scene pass exists; the current client remains WebGL2-backed to avoid a blank intermediate renderer.
+- Do not activate WebGPU as the live renderer until the full scene/UI path exists; the current client remains WebGL2-backed while WebGPU parity is developed in the opt-in A/B path.
 
 ### 3. Static scene
 
-Status: terrain and static-scenery foundation in progress.
+Status: static terrain/scenery A/B rendering implemented on this branch. Live full-client WebGPU activation remains later.
 
 #### 3A. Terrain geometry/render-pass foundation
 
@@ -75,7 +75,7 @@ Status: implemented on this branch.
 
 #### 3B. Terrain textures/material parity and A/B activation
 
-Status: in progress.
+Status: implemented on this branch.
 
 ##### 3B.1. Shared material table and ordinary texture sampling
 
@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement metadata, wall/decor ordering, delayed-wall ordering, exact 0..11 face priority, and back-face-aware priority membership are implemented in the A/B path. Broader scene culling remains in checkpoint 4.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement metadata, wall/decor ordering, delayed-wall ordering, exact 0..11 face priority, static culling parity, and static interaction geometry are implemented in the A/B path.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -147,7 +147,7 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Use the shared `fsMainAlpha` cutoff path plus `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`, `less-equal` depth testing, and depth writes enabled for transparent loc parity.
 - Cache cull/no-cull variants for opaque and alpha loc pipelines rather than rebuilding pipeline state in the frame loop.
 - Keep door vertex/index/model-info resources independent from ordinary loc resources so a `doorOnly` payload can replace doors without touching terrain or locs.
-- Map the worker's eight door model-info/range variants into the same static-loc GPU format; the current comparison uses the ordinary opaque/alpha and LOD variants while preserving the interaction variants for later picking/highlight work.
+- Map the worker's eight door model-info/range variants into the same static-loc GPU format; the current comparison uses the ordinary opaque/alpha and LOD variants while preserving the interaction variants for static picking/highlight work.
 - Preserve terrain-first map-local ordering and the existing loc -> ground-item -> door baseline where no delayed-wall dependency exists.
 - Mirror valid `locOnly` and `doorOnly` updates only after WebGL commits the corresponding `MapManager.addMap`, rather than when a worker payload merely enters the queue.
 - Preserve FIFO ordering for multiple partial updates targeting the same map and discard queued partials when a full payload supersedes them.
@@ -165,19 +165,39 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Primary transformed world-entity terrain/loc/door rendering is covered here. The special overlap/ghost redraw/opacity path and dynamic world-entity NPC content remain later parity work.
 - Reuse the authoritative `buildGroundItemGeometry` CPU output instead of performing a second WebGPU-specific item-stack selection, item-model load, bridge-plane resolution, or mesh build.
 - Publish versioned ground-item geometry snapshots against the actual `WebGLMapSquare` object and lazily mirror a changed or cleared snapshot when that same map becomes visible in the A/B comparison.
-- Map ground-item vertices, uint32 indices, model-info tables, opaque/alpha ranges, LOD ranges, and roof-plane metadata into the existing static-loc GPU resource contract; interaction variants remain available for the later picking/highlight stage.
+- Map ground-item vertices, uint32 indices, model-info tables, opaque/alpha ranges, LOD ranges, roof-plane metadata, and retained interaction variants into the existing static-loc GPU resource contract.
 - Reuse each map square's retained signed `heightMapData` and `heightMapSize` so ground-item `CENTER_TILE` contouring samples the same bridge-aware height data as the WebGL path.
 - Ground items use the same roof-plane filter, full-detail/LOD selection, material/texture path, alpha cutoff, depth behavior, and per-map world-entity transform as other static model geometry.
 - Ground-item texture loads already flow through `updateTextureArray`, which mirrors the streamed pixel payload into the WebGPU comparison before the WebGL array upload path.
 - Preserve WebGL's missing-model retry behavior because the WebGPU snapshot is produced by the same CPU rebuild attempt; an empty/failed build clears the comparison geometry until the authoritative builder produces a later revision.
 - Loc, door, and ground-item resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Dedicated static face-priority ordering is implemented. Special world-entity overlap/ghost rendering and broader chunk/entity/model culling remain later ordering/parity work.
+- Dedicated static face-priority ordering, static culling parity, and asynchronous static picking are implemented. Special world-entity overlap/ghost rendering and dynamic-scene interaction parity remain later work.
 
 ### 4. Ordering, depth, culling, and picking
 
-Status: in progress.
+Status: static ordering/culling and asynchronous static picking are implemented in the A/B path. Dynamic interaction parity remains pending.
 
-Cardinal wall/decor camera-relative depth rules, diagonal decoration selection, type-1/type-3 delayed-wall ordering, exact 0..11 per-face priority sorting, instance-aware contour depth, and projected back-face filtering before priority thresholds are implemented in the WebGPU comparison. Remaining work is broader chunk/entity/model/near-plane culling parity and asynchronous picking.
+Completed for the current static WebGPU comparison:
+
+- cardinal wall/decor camera-relative depth rules;
+- diagonal decoration selection;
+- type-1/type-3 delayed-wall ordering;
+- exact 0..11 per-face priority sorting and priority visibility;
+- authoritative visible-map membership/order, render-distance rejection, LOD selection, roof-plane filtering, and world-entity-aware map bounds;
+- back-face-aware priority membership and conservative camera-plane crossing behavior;
+- asynchronous static picking for terrain, ordinary/animated locs, doors, and ground items across opaque/alpha and full-detail/LOD variants;
+- world-entity transforms and source-map identity in the static pick payload;
+- on-demand one-pixel `rgba32uint` readback without making synchronous GPU readback part of the normal frame loop.
+
+The static picker remains non-authoritative while the CPU `SceneRaycaster` covers the complete interaction system. Remaining ordering/culling/picking work now belongs to later dynamic and hardening checkpoints:
+
+- players, NPCs, projectiles, spot animations, and other dynamic entity visibility/picking;
+- interaction highlights and static-vs-dynamic occlusion parity;
+- special world-entity overlap/ghost redraw/opacity semantics and dynamic world-entity content;
+- optional cursor-frustum/chunk narrowing for pick-pass performance after correctness is validated;
+- representative browser/GPU A/B validation, including camera-near geometry and large world-entity transforms.
+
+See `docs/WEBGPU_STATIC_CULLING_PARITY.md` and `docs/WEBGPU_STATIC_PICKING.md` for the detailed static contracts.
 
 ### 5. Dynamic scene
 
