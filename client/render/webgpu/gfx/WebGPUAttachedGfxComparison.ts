@@ -100,6 +100,13 @@ interface InstanceGpuResources {
     capacityBytes: number;
 }
 
+interface OrderedAttachmentEntry {
+    inst: GfxInstance;
+    actorId: number;
+    slot: number;
+    yOffsetUnits: number;
+}
+
 const hostsByFrame = new WeakMap<object, WebGLOsrsRenderer>();
 const hostStates = new WeakMap<WebGLOsrsRenderer, AttachedGfxComparisonHostState>();
 const runtimesByStaticRenderer = new WeakMap<
@@ -127,10 +134,7 @@ function comparisonRequested(): boolean {
     return value === "1" || value === "true" || value === "compare" || value === "split";
 }
 
-function resetForFrame(
-    state: AttachedGfxComparisonHostState,
-    frameToken: number,
-): void {
+function resetForFrame(state: AttachedGfxComparisonHostState, frameToken: number): void {
     if (state.currentFrameToken === frameToken) return;
     state.currentFrameToken = frameToken;
     state.opaqueDraws.length = 0;
@@ -178,25 +182,63 @@ function cacheGeometry(
     return geometry;
 }
 
+function getYOffsetUnits(inst: GfxInstance): number {
+    return inst.anchor === "offset" ? Math.round((inst.yOffsetTiles ?? 0) * 128) | 0 : 0;
+}
+
+/**
+ * Reproduce GfxRenderer's observable draw ordering after it has selected the
+ * authoritative frame: first-seen (spot,frame) groups, then first-seen Y-offset
+ * groups inside each spot/frame group, then original entry order.
+ */
+export function orderWebGPUAttachedGfxEntriesLikeWebGL(
+    entries: readonly OrderedAttachmentEntry[],
+): OrderedAttachmentEntry[] {
+    const spotGroups = new Map<string, OrderedAttachmentEntry[]>();
+    for (const entry of entries) {
+        if (entry.inst.startTimeMs == null || typeof entry.inst.lastSoundFrame !== "number") {
+            continue;
+        }
+        const key = `${entry.inst.spotId | 0}|${entry.inst.lastSoundFrame | 0}`;
+        let group = spotGroups.get(key);
+        if (!group) {
+            group = [];
+            spotGroups.set(key, group);
+        }
+        group.push(entry);
+    }
+
+    const ordered: OrderedAttachmentEntry[] = [];
+    for (const group of spotGroups.values()) {
+        const yOffsetGroups = new Map<number, OrderedAttachmentEntry[]>();
+        for (const entry of group) {
+            let yGroup = yOffsetGroups.get(entry.yOffsetUnits);
+            if (!yGroup) {
+                yGroup = [];
+                yOffsetGroups.set(entry.yOffsetUnits, yGroup);
+            }
+            yGroup.push(entry);
+        }
+        for (const yGroup of yOffsetGroups.values()) ordered.push(...yGroup);
+    }
+    return ordered;
+}
+
 function createAttachedGfxDraw(
     host: WebGLOsrsRenderer,
     state: AttachedGfxComparisonHostState,
     map: WebGLMapSquare,
     pass: WebGPUAttachedGfxPass,
     attachmentKind: WebGPUAttachedGfxKind,
-    inst: GfxInstance,
-    actorId: number,
+    entry: OrderedAttachmentEntry,
     actorRecordIndex: number,
 ): WebGPUAttachedGfxDrawSnapshot | undefined {
+    const inst = entry.inst;
     if (inst.startTimeMs == null || typeof inst.lastSoundFrame !== "number") return undefined;
     const spotFrame = inst.lastSoundFrame | 0;
     const spotId = inst.spotId | 0;
     const transparent = pass === "alpha";
-    const raw = host.gfxRenderer?.getCache?.().ensureFrameGeometry(
-        spotId,
-        spotFrame,
-        transparent,
-    );
+    const raw = host.gfxRenderer?.getCache?.().ensureFrameGeometry(spotId, spotFrame, transparent);
     if (!raw || raw.vertices.byteLength === 0 || raw.indices.length === 0) return undefined;
 
     const wordOffset = (actorRecordIndex | 0) * DYNAMIC_ACTOR_WEBGL_RECORD_WORDS;
@@ -208,26 +250,24 @@ function createAttachedGfxDraw(
     }
 
     const decoded = decodeDynamicActorWebGLRecord(host.actorRenderData, wordOffset);
-    const yOffsetUnits =
-        inst.anchor === "offset" ? Math.round((inst.yOffsetTiles ?? 0) * 128) | 0 : 0;
     let serverId: number | undefined;
     let worldViewId = -1;
     if (attachmentKind === "player") {
         const ecs = host.osrsClient.playerEcs;
-        const sid = ecs.getServerIdForIndex(actorId | 0);
+        const sid = ecs.getServerIdForIndex(entry.actorId | 0);
         serverId = typeof sid === "number" ? sid | 0 : undefined;
-        worldViewId = ecs.getWorldViewId?.(actorId | 0) ?? -1;
+        worldViewId = ecs.getWorldViewId?.(entry.actorId | 0) ?? -1;
     } else {
         const ecs = host.osrsClient.npcEcs;
-        serverId = ecs.getServerId(actorId | 0) | 0;
-        worldViewId = ecs.getWorldViewId(actorId | 0) | 0;
+        serverId = ecs.getServerId(entry.actorId | 0) | 0;
+        worldViewId = ecs.getWorldViewId(entry.actorId | 0) | 0;
     }
 
     const geometry = cacheGeometry(state, spotId, spotFrame, pass, raw);
     const instance: DynamicActorInstance = {
         identity: {
             kind: attachmentKind,
-            actorId: actorId | 0,
+            actorId: entry.actorId | 0,
             serverId,
             worldViewId,
             interactionId: decoded.interactionId | 0,
@@ -238,10 +278,9 @@ function createAttachedGfxDraw(
             localY: decoded.localY,
             plane: decoded.plane,
             rotation: decoded.rotation,
-            // GfxRenderer passes positive u_modelYOffset to npc.vert.glsl,
-            // which subtracts it. The shared WebGPU actor shader adds this
-            // field, so normalize the sign at this renderer-neutral boundary.
-            modelYOffset: -yOffsetUnits,
+            // WebGL subtracts positive u_modelYOffset. The shared WebGPU actor
+            // path adds modelYOffset, so normalize the sign here.
+            modelYOffset: -entry.yOffsetUnits,
         },
         animation: {
             sequenceId: -1,
@@ -265,6 +304,33 @@ function createAttachedGfxDraw(
     };
 }
 
+function appendOrderedAttachments(
+    host: WebGLOsrsRenderer,
+    state: AttachedGfxComparisonHostState,
+    map: WebGLMapSquare,
+    pass: WebGPUAttachedGfxPass,
+    kind: WebGPUAttachedGfxKind,
+    baseOffset: number,
+    entries: OrderedAttachmentEntry[],
+): void {
+    const ordered = orderWebGPUAttachedGfxEntriesLikeWebGL(entries);
+    for (const entry of ordered) {
+        const draw = createAttachedGfxDraw(
+            host,
+            state,
+            map,
+            pass,
+            kind,
+            entry,
+            (baseOffset | 0) + (entry.slot | 0),
+        );
+        if (!draw) continue;
+        if (pass === "opaque") state.opaqueDraws.push(draw);
+        else if (kind === "player") state.playerAlphaDraws.push(draw);
+        else state.npcAlphaDraws.push(draw);
+    }
+}
+
 function captureAttachedGfxPass(
     host: WebGLOsrsRenderer,
     state: AttachedGfxComparisonHostState,
@@ -272,52 +338,50 @@ function captureAttachedGfxPass(
     pass: WebGPUAttachedGfxPass,
     offsets: { player?: number; npc?: number; world?: number },
 ): void {
-    const frameToken = host.sceneFrameDescription.currentTime;
-    resetForFrame(state, frameToken);
+    resetForFrame(state, host.sceneFrameDescription.currentTime);
     const mgr = host.gfxManager;
     if (!mgr) return;
 
-    const capturePlayer = offsets.player !== undefined && offsets.player !== -1;
-    const captureNpc = offsets.npc !== undefined && offsets.npc !== -1;
-
-    // World-tile GFX intentionally remain out of G1. They have their own actor
-    // records and placement semantics and will be migrated independently.
-    if (capturePlayer) {
-        const entries = mgr.getAttachedPlayersForMap(map);
-        for (const entry of entries) {
-            const draw = createAttachedGfxDraw(
-                host,
-                state,
-                map,
-                pass,
-                "player",
-                entry.inst,
-                entry.pid | 0,
-                (offsets.player as number) + (entry.slot | 0),
-            );
-            if (!draw) continue;
-            if (pass === "opaque") state.opaqueDraws.push(draw);
-            else state.playerAlphaDraws.push(draw);
-        }
+    // World-tile GFX intentionally remain out of G1. They have independent
+    // placement records and will be migrated separately.
+    if (offsets.player !== undefined && offsets.player !== -1) {
+        const playerEntries: OrderedAttachmentEntry[] = mgr
+            .getAttachedPlayersForMap(map)
+            .map((entry) => ({
+                inst: entry.inst,
+                actorId: entry.pid | 0,
+                slot: entry.slot | 0,
+                yOffsetUnits: getYOffsetUnits(entry.inst),
+            }));
+        appendOrderedAttachments(
+            host,
+            state,
+            map,
+            pass,
+            "player",
+            offsets.player | 0,
+            playerEntries,
+        );
     }
 
-    if (captureNpc) {
-        const entries = mgr.getAttachedNpcsForMap(map);
-        for (const entry of entries) {
-            const draw = createAttachedGfxDraw(
-                host,
-                state,
-                map,
-                pass,
-                "npc",
-                entry.inst,
-                entry.ecsId | 0,
-                (offsets.npc as number) + (entry.slot | 0),
-            );
-            if (!draw) continue;
-            if (pass === "opaque") state.opaqueDraws.push(draw);
-            else state.npcAlphaDraws.push(draw);
-        }
+    if (offsets.npc !== undefined && offsets.npc !== -1) {
+        const npcEntries: OrderedAttachmentEntry[] = mgr
+            .getAttachedNpcsForMap(map)
+            .map((entry) => ({
+                inst: entry.inst,
+                actorId: entry.ecsId | 0,
+                slot: entry.slot | 0,
+                yOffsetUnits: getYOffsetUnits(entry.inst),
+            }));
+        appendOrderedAttachments(
+            host,
+            state,
+            map,
+            pass,
+            "npc",
+            offsets.npc | 0,
+            npcEntries,
+        );
     }
 }
 
@@ -401,15 +465,12 @@ class WebGPUAttachedGfxRuntime {
                 },
             ],
         };
-        const opaquePipeline = device.createRenderPipeline({
+
+        this.opaquePipeline = device.createRenderPipeline({
             label: "attached-gfx-opaque-pipeline",
             layout: pipelineLayout,
             vertex,
-            fragment: {
-                module,
-                entryPoint: "fsPlayerOpaque",
-                targets: [{ format }],
-            },
+            fragment: { module, entryPoint: "fsPlayerOpaque", targets: [{ format }] },
             primitive: {
                 topology: "triangle-list",
                 frontFace: "ccw",
@@ -421,19 +482,14 @@ class WebGPUAttachedGfxRuntime {
                 depthCompare: WEBGPU_ATTACHED_GFX_OPAQUE_PIPELINE_STATE.depthCompare,
             },
         });
-        const alphaPipeline = device.createRenderPipeline({
+        this.alphaPipeline = device.createRenderPipeline({
             label: "attached-gfx-alpha-pipeline",
             layout: pipelineLayout,
             vertex,
             fragment: {
                 module,
                 entryPoint: "fsPlayerAlpha",
-                targets: [
-                    {
-                        format,
-                        blend: WEBGPU_ATTACHED_GFX_ALPHA_PIPELINE_STATE.blend,
-                    },
-                ],
+                targets: [{ format, blend: WEBGPU_ATTACHED_GFX_ALPHA_PIPELINE_STATE.blend }],
             },
             primitive: {
                 topology: "triangle-list",
@@ -449,8 +505,6 @@ class WebGPUAttachedGfxRuntime {
 
         this.device = device;
         this.heightLayout = heightLayout;
-        this.opaquePipeline = opaquePipeline;
-        this.alphaPipeline = alphaPipeline;
         this.ready = true;
     }
 
@@ -462,8 +516,7 @@ class WebGPUAttachedGfxRuntime {
         if (!device) return undefined;
         const sourcePass = pass === "opaque" ? draw.geometry.opaque : draw.geometry.alpha;
         if (sourcePass.indices.length === 0 || sourcePass.vertices.byteLength === 0) return undefined;
-        const key = draw.geometry.key;
-        const existing = this.geometry.get(key);
+        const existing = this.geometry.get(draw.geometry.key);
         if (existing?.source === draw.geometry) return existing;
         if (existing) {
             existing.vertexBuffer.destroy?.();
@@ -471,12 +524,12 @@ class WebGPUAttachedGfxRuntime {
         }
 
         const vertexBuffer = device.createBuffer({
-            label: `${key}-vertices`,
+            label: `${draw.geometry.key}-vertices`,
             size: alignedBufferSize(sourcePass.vertices.byteLength),
             usage: WEBGPU_BUFFER_USAGE.VERTEX | WEBGPU_BUFFER_USAGE.COPY_DST,
         });
         const indexBuffer = device.createBuffer({
-            label: `${key}-indices`,
+            label: `${draw.geometry.key}-indices`,
             size: alignedBufferSize(sourcePass.indices.byteLength),
             usage: WEBGPU_BUFFER_USAGE.INDEX | WEBGPU_BUFFER_USAGE.COPY_DST,
         });
@@ -488,7 +541,7 @@ class WebGPUAttachedGfxRuntime {
             indexBuffer,
             indexCount: sourcePass.indices.length | 0,
         };
-        this.geometry.set(key, resources);
+        this.geometry.set(draw.geometry.key, resources);
         return resources;
     }
 
@@ -576,8 +629,8 @@ class WebGPUAttachedGfxRuntime {
 
             passEncoder.setBindGroup(1, mapResources.sharedMapBindGroup);
             passEncoder.setBindGroup(3, height.bindGroup);
-            // Match current WebGL GFX behavior: attached effects use the parent
-            // actor record for placement but always use identity world transform.
+            // Match current WebGL GFX behavior: parent actor placement is reused,
+            // but attached effects always receive identity world transform.
             const instanceData = packWebGPUPlayerInstanceData([draw.instance]);
             const bufferKey = `${pass}:${draw.mapX}:${draw.mapY}:${draw.geometry.key}:${draw.attachmentKind}:${draw.instance.identity.actorId}`;
             const instanceBuffer = this.getInstanceBuffer(bufferKey, instanceData);
@@ -660,10 +713,7 @@ function patchOpaquePostPlayerBoundary(): void {
     };
 }
 
-/**
- * Install this after the NPC-alpha phase has registered but before the player
- * alpha wrapper. The resulting chain is static -> NPC alpha -> NPC GFX.
- */
+/** Install after NPC alpha registration but before the player-alpha wrapper. */
 export function installWebGPUNpcAttachedGfxAlphaBoundary(): void {
     if (npcAlphaBoundaryPatched) return;
     npcAlphaBoundaryPatched = true;
@@ -683,10 +733,7 @@ export function installWebGPUNpcAttachedGfxAlphaBoundary(): void {
     };
 }
 
-/**
- * Install this after the player-alpha wrapper. The resulting chain appends
- * player-attached alpha GFX after transparent players, matching WebGL2.
- */
+/** Install after the player-alpha wrapper. */
 export function installWebGPUPlayerAttachedGfxAlphaBoundary(): void {
     if (playerAlphaBoundaryPatched) return;
     playerAlphaBoundaryPatched = true;
@@ -737,8 +784,8 @@ export function installWebGPUAttachedGfxComparison(renderer: Renderer): () => vo
     ) {
         const result = previous.call(this, map, actorDataTexture, pass, offsets);
         try {
-            // Capture after WebGL has rendered. GfxRenderer records the exact
-            // frame it just used in inst.lastSoundFrame, avoiding a second clock.
+            // Capture after WebGL has rendered. lastSoundFrame is the exact
+            // authoritative frame used by GfxRenderer for this pass.
             captureAttachedGfxPass(host, state, map, pass, offsets);
         } catch (error) {
             console.warn("[WebGPU GFX comparison] Failed to capture attached GFX", error);
