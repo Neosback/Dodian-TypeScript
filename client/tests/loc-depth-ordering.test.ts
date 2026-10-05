@@ -147,7 +147,7 @@ assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(0, 64, 0), true);
 assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(0, -64, 0), false);
 // Rotation 1 negates X; rotation 2 negates both; rotation 3 negates Y.
 assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(1, -64, 0), true);
-assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(2, -64, 0), false);
+assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(2, 64, 0), false);
 assert.equal(isPrimaryDiagonalWallDecorationFacingCamera(3, 64, 0), true);
 
 const centerX = sameTileContext.locCenterX;
