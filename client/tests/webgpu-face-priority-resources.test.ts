@@ -90,16 +90,20 @@ const device = {
     },
 } as unknown as WebGPUDeviceLike;
 
+const vertices = new Uint8Array(36);
+for (let i = 0; i < vertices.length; i++) vertices[i] = i;
 const sourceIndices = new Int32Array([10, 11, 12, 20, 21, 22, 30, 31, 32]);
 const resources = new WebGPUFacePrioritySortResources(
     device,
     "fixture",
+    vertices,
     sourceIndices,
     priorities,
     modelSpanWords,
 );
 
 assert.deepEqual(Array.from(resources.sourceIndices), Array.from(sourceIndices, (value) => value >>> 0));
+assert.deepEqual(Array.from(resources.vertices), Array.from(vertices));
 assert.deepEqual(resources.resolveDraw({ firstIndex: 0, indexCount: 9 }), {
     firstSpan: 0,
     spanCount: 2,
@@ -113,21 +117,18 @@ const usages = new Map(
 assert.ok((usages.get("fixture-face-priorities")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
 assert.ok((usages.get("fixture-face-priority-model-spans")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
 assert.ok((usages.get("fixture-face-priority-source-indices")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
-assert.ok((usages.get("fixture-face-priority-sorted-indices")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
-assert.ok((usages.get("fixture-face-priority-sorted-indices")! & WEBGPU_BUFFER_USAGE.INDEX) !== 0);
+assert.equal(usages.has("fixture-face-priority-sorted-indices"), false);
 
-assert.deepEqual(
-    writes.find((write) => write.label === "fixture-face-priority-sorted-indices")?.values,
-    Array.from(sourceIndices),
-    "sorted target must start as the exact plain index stream",
-);
 assert.deepEqual(
     writes.find((write) => write.label === "fixture-face-priorities")?.values,
     [11, 3, 0],
 );
 
+let disposedCallback = 0;
+resources.registerDisposeCallback(() => disposedCallback++);
 resources.dispose();
-assert.equal(destroyed.length, 4);
+assert.equal(disposedCallback, 1);
+assert.equal(destroyed.length, 3);
 assert.equal(resources.modelSpans.length, 0);
 
-console.log("webgpu face-priority resource and span-resolution checks passed");
+console.log("webgpu face-priority invariant resource and span-resolution checks passed");
