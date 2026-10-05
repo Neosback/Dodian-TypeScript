@@ -3,8 +3,11 @@ import type { LocGeometryData } from "../../loader/SdMapData";
 import {
     LOC_PLACEMENT_NONE,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
+    LOC_PLACEMENT_TRAILER_LEGACY_VERSION,
     LOC_PLACEMENT_TRAILER_MAGIC,
     LOC_PLACEMENT_TRAILER_VERSION,
+    LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE,
+    combineLocPlacementMetadata,
     encodeLocPlacementMetadataForWebGPU,
     getLocPlacementTrailerWordOffset,
 } from "../../loc/LocPlacementMetadata";
@@ -32,8 +35,8 @@ export interface WebGPUStaticLocPlan {
     draws: WebGPUStaticLocDrawPlanEntry[];
     sourceIndices: number[];
     modelInfoWords: Uint32Array;
-    /** Raw uint16 placement values parallel to model-info instances. */
-    placementMetadata: Uint16Array;
+    /** Full renderer-neutral placement values parallel to model-info instances. */
+    placementMetadata: Uint32Array;
 }
 
 export type WebGPUStaticLocGeometryData = Pick<
@@ -99,8 +102,8 @@ function readPlacementMetadataTrailer(
     modelData: Uint16Array,
     drawCount: number,
     instanceCount: number,
-): Uint16Array {
-    const metadata = new Uint16Array(instanceCount);
+): Uint32Array {
+    const metadata = new Uint32Array(instanceCount);
     metadata.fill(LOC_PLACEMENT_NONE);
 
     const trailerOffset = getLocPlacementTrailerWordOffset(drawCount, instanceCount);
@@ -110,7 +113,8 @@ function readPlacementMetadataTrailer(
     }
 
     const version = modelData[trailerOffset + 1] | 0;
-    if (version !== LOC_PLACEMENT_TRAILER_VERSION) {
+    const isLegacyVersion = version === LOC_PLACEMENT_TRAILER_LEGACY_VERSION;
+    if (!isLegacyVersion && version !== LOC_PLACEMENT_TRAILER_VERSION) {
         throw new Error(`Unsupported loc placement metadata trailer version ${version}`);
     }
 
@@ -123,7 +127,8 @@ function readPlacementMetadataTrailer(
         );
     }
 
-    const metadataEnd = headerEnd + encodedInstanceCount;
+    const wordsPerInstance = isLegacyVersion ? 1 : LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
+    const metadataEnd = headerEnd + encodedInstanceCount * wordsPerInstance;
     if (modelData.length < metadataEnd) {
         throw new Error(
             `Loc placement metadata trailer exceeds model-info data: expected ${metadataEnd} words, got ${modelData.length}`,
@@ -131,7 +136,15 @@ function readPlacementMetadataTrailer(
     }
 
     for (let i = 0; i < instanceCount; i++) {
-        metadata[i] = modelData[headerEnd + i];
+        if (isLegacyVersion) {
+            metadata[i] = modelData[headerEnd + i];
+            continue;
+        }
+        const payloadOffset = headerEnd + i * LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
+        metadata[i] = combineLocPlacementMetadata(
+            modelData[payloadOffset],
+            modelData[payloadOffset + 1],
+        );
     }
     return metadata;
 }
