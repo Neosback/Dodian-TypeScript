@@ -14,6 +14,12 @@ import type {
     WebGPURenderPipelineLike,
 } from "../../backend/WebGPUPlatform";
 import type { WebGPUTerrainMapResources } from "../terrain/WebGPUTerrainMapResources";
+import type { WebGPUHeightMapResources } from "./WebGPUHeightMapResources";
+import type { WebGPUFacePrioritySortResources } from "./WebGPUFacePrioritySortResources";
+import {
+    prepareWebGPUFacePriorityPass,
+    type WebGPUFacePriorityPreparedPass,
+} from "./WebGPUFacePriorityPassActivation";
 import type {
     WebGPUStaticLocDrawPlanEntry,
     WebGPUStaticLocPassResources,
@@ -22,8 +28,8 @@ import type {
 export interface WebGPUOrderedStaticGeometryResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
-    /** Priority-aware resources expose the selected index source through this getter. */
-    readonly activeIndexBuffer?: WebGPUBufferLike;
+    readonly heightMap?: WebGPUHeightMapResources;
+    readonly facePrioritySortResources?: WebGPUFacePrioritySortResources;
 }
 
 export type WebGPUOrderedStaticDrawSource = {
@@ -35,18 +41,20 @@ type WebGPUOrderedStaticSubmission = {
     sourceIndex: number;
     resources: WebGPUOrderedStaticGeometryResources;
     staticPass: WebGPUStaticLocPassResources;
+    indexBuffer: WebGPUBufferLike;
     draw: WebGPUStaticLocDrawPlanEntry;
     ordering: LocDelayedWallDrawItem;
 };
 
 /**
  * Submit loc-like static geometry in its existing map-local baseline order,
- * applying only the local type-1/type-3 diagonal-wall painter constraints.
+ * applying exact model-local face-priority sorting first and then the local
+ * type-1/type-3 diagonal-wall painter constraints across whole placed models.
  *
- * The source list is intentionally supplied as ordinary locs -> ground items ->
- * doors. Stable topological ordering preserves that established WebGPU/WebGL
- * baseline unless an overlapping diagonal wall must move before/after a scene
- * loc according to the original software painter.
+ * The exact priority pass expands instanced draws into one draw per placement.
+ * This is required because terrain contouring can give two instances that share
+ * source geometry different face depths. It also lets delayed-wall ordering use
+ * the correct placement metadata for every instance instead of only the first.
  */
 export function drawWebGPUOrderedStaticGeometry(
     pass: WebGPURenderPassEncoderLike,
@@ -55,6 +63,50 @@ export function drawWebGPUOrderedStaticGeometry(
     pipeline: WebGPURenderPipelineLike,
     sources: readonly WebGPUOrderedStaticDrawSource[],
 ): void {
+    const preparedBySource = new Array<WebGPUFacePriorityPreparedPass | undefined>(
+        sources.length,
+    );
+
+    // The render pass is only being recorded at this point; its command buffer
+    // is submitted later by WebGPUStaticSceneRenderer. Submit one compute command
+    // buffer now so queue ordering guarantees depth -> sort completes before that
+    // later render submission consumes the dense sorted-index buffers.
+    let computeEncoder: ReturnType<WebGPUFacePrioritySortResources["device"]["createCommandEncoder"]> | undefined;
+    let computeDevice: WebGPUFacePrioritySortResources["device"] | undefined;
+    let encodedWorkItems = 0;
+
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+        const source = sources[sourceIndex];
+        const sortResources = source.resources?.facePrioritySortResources;
+        const heightMap = source.resources?.heightMap;
+        if (!sortResources || !heightMap || !source.staticPass) {
+            continue;
+        }
+        if (!computeEncoder) {
+            computeDevice = sortResources.device;
+            computeEncoder = computeDevice.createCommandEncoder({
+                label: "face-priority-static-pass-encoder",
+            });
+        } else if (computeDevice !== sortResources.device) {
+            throw new Error("Static face-priority sources unexpectedly use different WebGPU devices");
+        }
+
+        const prepared = prepareWebGPUFacePriorityPass(
+            computeEncoder,
+            frame,
+            map,
+            sortResources,
+            heightMap,
+            source.staticPass,
+        );
+        preparedBySource[sourceIndex] = prepared;
+        encodedWorkItems += prepared?.workItemCount ?? 0;
+    }
+
+    if (computeEncoder && computeDevice && encodedWorkItems > 0) {
+        computeDevice.queue.submit([computeEncoder.finish()]);
+    }
+
     const submissions: WebGPUOrderedStaticSubmission[] = [];
     const renderPosX = map.plan.renderPosX;
     const renderPosY = map.plan.renderPosY;
@@ -65,8 +117,16 @@ export function drawWebGPUOrderedStaticGeometry(
         if (!source.resources || !source.staticPass) {
             continue;
         }
-        for (const draw of source.staticPass.draws) {
-            if (draw.plane > frame.roofPlaneLimit) {
+        const prepared = preparedBySource[sourceIndex];
+        const draws = prepared?.draws ?? source.staticPass.draws;
+        const indexBuffer = prepared?.indexBuffer ?? source.resources.indexBuffer;
+
+        for (const draw of draws) {
+            if (
+                draw.indexCount <= 0 ||
+                draw.instanceCount <= 0 ||
+                draw.plane > frame.roofPlaneLimit
+            ) {
                 continue;
             }
             const instanceIndex = draw.firstInstance | 0;
@@ -81,6 +141,7 @@ export function drawWebGPUOrderedStaticGeometry(
                 sourceIndex,
                 resources: source.resources,
                 staticPass: source.staticPass,
+                indexBuffer,
                 draw,
                 ordering: {
                     plane: draw.plane,
@@ -109,20 +170,19 @@ export function drawWebGPUOrderedStaticGeometry(
     pass.setPipeline(pipeline);
     pass.setBindGroup(1, map.sharedMapBindGroup);
     let activeSourceIndex = -1;
+    let activeIndexBuffer: WebGPUBufferLike | undefined;
     for (const orderedIndex of order) {
         const submission = submissions[orderedIndex];
         const draw = submission.draw;
-        if (draw.indexCount <= 0 || draw.instanceCount <= 0) {
-            continue;
-        }
-        if (submission.sourceIndex !== activeSourceIndex) {
+        if (
+            submission.sourceIndex !== activeSourceIndex ||
+            submission.indexBuffer !== activeIndexBuffer
+        ) {
             activeSourceIndex = submission.sourceIndex;
+            activeIndexBuffer = submission.indexBuffer;
             pass.setBindGroup(4, submission.staticPass.bindGroup);
             pass.setVertexBuffer(0, submission.resources.vertexBuffer);
-            pass.setIndexBuffer(
-                submission.resources.activeIndexBuffer ?? submission.resources.indexBuffer,
-                "uint32",
-            );
+            pass.setIndexBuffer(submission.indexBuffer, "uint32");
         }
         pass.drawIndexed(
             draw.indexCount,
