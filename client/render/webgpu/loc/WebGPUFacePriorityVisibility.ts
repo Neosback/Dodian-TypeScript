@@ -3,22 +3,21 @@ import { createFacePriorityDrawOrder } from "../../priority/FacePrioritySort";
 export type FacePriorityVisibilityMatrix = ArrayLike<number>;
 export type FacePriorityVisibilityPoint = readonly [number, number, number];
 
+type Vec4 = readonly [number, number, number, number];
+
 function assertMatrix(matrix: FacePriorityVisibilityMatrix, label: string): void {
     if (matrix.length < 16) {
         throw new Error(`${label} requires a 4x4 matrix`);
     }
 }
 
-function transformPoint(
-    point: FacePriorityVisibilityPoint,
-    matrix: FacePriorityVisibilityMatrix,
-): [number, number, number, number] {
-    const [x, y, z] = point;
+function transformVec4(vector: Vec4, matrix: FacePriorityVisibilityMatrix): Vec4 {
+    const [x, y, z, w] = vector;
     return [
-        matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
-        matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
-        matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
-        matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15],
+        matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12] * w,
+        matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13] * w,
+        matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14] * w,
+        matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15] * w,
     ];
 }
 
@@ -45,19 +44,12 @@ export function isWebGPUFacePriorityFrontFacing(
     assertMatrix(projectionMatrix, "Face-priority projection transform");
 
     const project = (point: FacePriorityVisibilityPoint): [number, number] | undefined => {
-        const view = transformPoint(point, viewTransform);
-        const clip = transformPoint([view[0], view[1], view[2]], {
-            0: projectionMatrix[0], 1: projectionMatrix[1], 2: projectionMatrix[2], 3: projectionMatrix[3],
-            4: projectionMatrix[4], 5: projectionMatrix[5], 6: projectionMatrix[6], 7: projectionMatrix[7],
-            8: projectionMatrix[8], 9: projectionMatrix[9], 10: projectionMatrix[10], 11: projectionMatrix[11],
-            12: projectionMatrix[12], 13: projectionMatrix[13], 14: projectionMatrix[14], 15: projectionMatrix[15],
-            length: 16,
-        });
-        const w = projectionMatrix[3] * view[0] + projectionMatrix[7] * view[1] + projectionMatrix[11] * view[2] + projectionMatrix[15];
-        if (!(w > 0) || !Number.isFinite(w)) {
+        const view = transformVec4([point[0], point[1], point[2], 1], viewTransform);
+        const clip = transformVec4(view, projectionMatrix);
+        if (!(clip[3] > 0) || !Number.isFinite(clip[3])) {
             return undefined;
         }
-        return [clip[0] / w, clip[1] / w];
+        return [clip[0] / clip[3], clip[1] / clip[3]];
     };
 
     const pa = project(a);
