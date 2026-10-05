@@ -155,7 +155,12 @@ assert.ok(sceneOverrideIndex > actorOverrideIndex);
 const previousWindow = (globalThis as any).window;
 (globalThis as any).window = { location: { search: "?webgpuTerrain=1" } };
 let guardedCalls = 0;
-const originalOpaque = function (this: any): void {
+const originalOpaque = function (
+    this: any,
+    _map?: unknown,
+    _textureIndex?: unknown,
+    _texture?: unknown,
+): void {
     guardedCalls++;
     assert.equal(this.batchGroups.size, 0);
 };
