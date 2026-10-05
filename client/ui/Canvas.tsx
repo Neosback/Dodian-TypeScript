@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
 import { installWebGPUPlayerOpaqueComparison } from "../render/webgpu/player/WebGPUPlayerOpaqueComparison";
+import { installWebGPUPlayerOpaquePassBoundaryGuard } from "../render/webgpu/player/WebGPUPlayerOpaquePassBoundary";
 
 export interface CanvasProps {
     renderer: Renderer;
@@ -24,6 +25,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
 
         renderer.initOnce().then(() => {
             if (!active) return;
+            installWebGPUPlayerOpaquePassBoundaryGuard();
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
