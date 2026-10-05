@@ -10,6 +10,7 @@ import {
 } from "../../loc/LocPlacementMetadata";
 import type {
     WebGPUBufferLike,
+    WebGPUCommandEncoderLike,
     WebGPURenderPassEncoderLike,
     WebGPURenderPipelineLike,
 } from "../../backend/WebGPUPlatform";
@@ -71,7 +72,7 @@ export function drawWebGPUOrderedStaticGeometry(
     // is submitted later by WebGPUStaticSceneRenderer. Submit one compute command
     // buffer now so queue ordering guarantees depth -> sort completes before that
     // later render submission consumes the dense sorted-index buffers.
-    let computeEncoder: ReturnType<WebGPUFacePrioritySortResources["device"]["createCommandEncoder"]> | undefined;
+    let computeEncoder: WebGPUCommandEncoderLike | undefined;
     let computeDevice: WebGPUFacePrioritySortResources["device"] | undefined;
     let encodedWorkItems = 0;
 
