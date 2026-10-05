@@ -48,3 +48,27 @@ export function getLocOrderingAnchorTile(
     }
     return { x, y };
 }
+
+/**
+ * Convert the scene-builder anchor into the same world-tile space used by the
+ * renderer camera. Scene anchors include the worker's border; rendered map
+ * positions are map-square coordinates, so remove the world-tile offset after
+ * expanding the map position by 64 tiles.
+ */
+export function resolveLocOrderingAnchorWorldTile(
+    anchors: Int16Array,
+    instanceIndex: number,
+    renderPosX: number,
+    renderPosY: number,
+    worldTileOffset: number,
+): LocOrderingAnchorTile | undefined {
+    const anchor = getLocOrderingAnchorTile(anchors, instanceIndex);
+    if (!anchor) {
+        return undefined;
+    }
+    const offset = worldTileOffset | 0;
+    return {
+        x: (renderPosX | 0) * 64 + anchor.x - offset,
+        y: (renderPosY | 0) * 64 + anchor.y - offset,
+    };
+}
