@@ -30,8 +30,11 @@ function transformVec4(vector: Vec4, matrix: FacePriorityVisibilityMatrix): Vec4
  *
  * `(aX-bX)*(cY-bY) - (cX-bX)*(aY-bY) > 0`.
  *
- * Vertices behind the camera (`w <= 0`) cannot establish the submitted
- * primitive's front-facing winding before clipping and are excluded here.
+ * A triangle fully behind the camera (`w <= 0` for all three vertices) cannot
+ * rasterize and is rejected. A triangle that straddles the camera plane is kept
+ * conservatively: projected winding is undefined before clipping, while the
+ * hardware rasterizer can clip the primitive correctly. Only triangles with
+ * three positive clip-space W values are rejected by the projected winding test.
  */
 export function isWebGPUFacePriorityFrontFacing(
     a: FacePriorityVisibilityPoint,
@@ -43,21 +46,36 @@ export function isWebGPUFacePriorityFrontFacing(
     assertMatrix(viewTransform, "Face-priority view transform");
     assertMatrix(projectionMatrix, "Face-priority projection transform");
 
-    const project = (point: FacePriorityVisibilityPoint): [number, number] | undefined => {
+    const clipPoint = (point: FacePriorityVisibilityPoint): Vec4 => {
         const view = transformVec4([point[0], point[1], point[2], 1], viewTransform);
-        const clip = transformVec4(view, projectionMatrix);
-        if (!(clip[3] > 0) || !Number.isFinite(clip[3])) {
-            return undefined;
-        }
-        return [clip[0] / clip[3], clip[1] / clip[3]];
+        return transformVec4(view, projectionMatrix);
     };
 
-    const pa = project(a);
-    const pb = project(b);
-    const pc = project(c);
-    if (!pa || !pb || !pc) {
+    const ca = clipPoint(a);
+    const cb = clipPoint(b);
+    const cc = clipPoint(c);
+    if (
+        !Number.isFinite(ca[3]) ||
+        !Number.isFinite(cb[3]) ||
+        !Number.isFinite(cc[3])
+    ) {
         return false;
     }
+
+    const aInFront = ca[3] > 0;
+    const bInFront = cb[3] > 0;
+    const cInFront = cc[3] > 0;
+    const frontCount = Number(aInFront) + Number(bInFront) + Number(cInFront);
+    if (frontCount === 0) {
+        return false;
+    }
+    if (frontCount < 3) {
+        return true;
+    }
+
+    const pa: [number, number] = [ca[0] / ca[3], ca[1] / ca[3]];
+    const pb: [number, number] = [cb[0] / cb[3], cb[1] / cb[3]];
+    const pc: [number, number] = [cc[0] / cc[3], cc[1] / cc[3]];
     const winding =
         (pa[0] - pb[0]) * (pc[1] - pb[1]) -
         (pc[0] - pb[0]) * (pa[1] - pb[1]);
