@@ -56,7 +56,33 @@ behindProjection[15] = -1;
 assert.equal(
     isWebGPUFacePriorityFrontFacing(frontA, frontB, frontC, identity, behindProjection),
     false,
-    "non-positive clip w must not participate in priority visibility",
+    "a triangle fully behind the camera must not participate in priority visibility",
+);
+
+const cameraPlaneCrossingProjection = new Float32Array(identity);
+cameraPlaneCrossingProjection[3] = 1;
+cameraPlaneCrossingProjection[15] = 0;
+assert.equal(
+    isWebGPUFacePriorityFrontFacing(
+        frontA,
+        frontB,
+        frontC,
+        identity,
+        cameraPlaneCrossingProjection,
+    ),
+    true,
+    "a triangle crossing the camera plane must remain eligible for hardware clipping",
+);
+assert.equal(
+    isWebGPUFacePriorityFrontFacing(
+        [-3, -1, 0],
+        [-2, 1, 0],
+        [-1, -1, 0],
+        identity,
+        cameraPlaneCrossingProjection,
+    ),
+    false,
+    "a triangle with all clip-space w values behind the camera must still be rejected",
 );
 
 const depths = [100, 0, 60, 10, 30, 25];
@@ -114,6 +140,8 @@ assert.equal(visibilityState.cullBackFace, true);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /faceVisibility: array<u32>/);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /projectedFrontFacing/);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /uniforms\.cullBackFace == 0u/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /frontCount == 0u/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /frontCount < 3u/);
 assert.match(WEBGPU_FACE_PRIORITY_SORT_SHADER, /faceVisibility: array<u32>/);
 assert.match(WEBGPU_FACE_PRIORITY_SORT_SHADER, /workVisible/);
 assert.match(WEBGPU_FACE_PRIORITY_SORT_SHADER, /visibleCount \+ hiddenBefore/);
