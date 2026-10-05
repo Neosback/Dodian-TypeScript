@@ -12,17 +12,21 @@ import {
     LOC_PLACEMENT_TRAILER_MAGIC,
     LOC_PLACEMENT_TRAILER_VERSION,
     encodeLocPlacementMetadataForWebGPU,
+    getEncodedLocPlacementAnchor,
+    getLocPlacementIdentity,
     getLocPlacementTrailerWordOffset,
     packLocPlacementMetadata,
 } from "../render/loc/LocPlacementMetadata";
 import { createWebGPUStaticLocPlanFromData } from "../render/webgpu/loc/WebGPUStaticLocResources";
 import { LocModelType } from "../rs/config/loctype/LocModelType";
 
-const wallPlacement = packLocPlacementMetadata(LocModelType.WALL, 2, false);
+const wallPlacement = packLocPlacementMetadata(LocModelType.WALL, 2, false, 6, 69);
 const decorationPlacement = packLocPlacementMetadata(
     LocModelType.WALL_DECORATION_DIAGONAL_DOUBLE,
     1,
     true,
+    10,
+    11,
 );
 
 const commands: DrawCommand[] = [
@@ -82,13 +86,18 @@ assert.equal(modelData[trailerOffset], LOC_PLACEMENT_TRAILER_MAGIC);
 assert.equal(modelData[trailerOffset + 1], LOC_PLACEMENT_TRAILER_VERSION);
 assert.equal(modelData[trailerOffset + 2], 2);
 assert.equal(modelData[trailerOffset + 3], 0);
+
+// The placement trailer must carry both halves of each renderer-neutral
+// placement value. Keeping the anchor in a second uint16 word leaves the
+// legacy WebGL2 header/instance ABI unchanged while allowing WebGPU to recover
+// the exact scene-tile anchor needed by diagonal boundary ordering.
+const payloadOffset = trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS;
+assert.equal(modelData[payloadOffset], getLocPlacementIdentity(wallPlacement));
+assert.equal(modelData[payloadOffset + 1], getEncodedLocPlacementAnchor(wallPlacement));
+assert.equal(modelData[payloadOffset + 2], getLocPlacementIdentity(decorationPlacement));
 assert.equal(
-    modelData[trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS],
-    wallPlacement,
-);
-assert.equal(
-    modelData[trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS + 1],
-    decorationPlacement,
+    modelData[payloadOffset + 3],
+    getEncodedLocPlacementAnchor(decorationPlacement),
 );
 
 const plan = createWebGPUStaticLocPlanFromData(
