@@ -11,11 +11,15 @@ import {
     getLocOrderingAnchorTile,
 } from "../render/loc/LocOrderingMetadata";
 import {
+    LOC_PLACEMENT_FOOTPRINT_NONE,
     LOC_PLACEMENT_NONE,
+    LOC_PLACEMENT_TRAILER_ANCHOR_VERSION,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
     LOC_PLACEMENT_TRAILER_LEGACY_VERSION,
     LOC_PLACEMENT_TRAILER_MAGIC,
     LOC_PLACEMENT_TRAILER_VERSION,
+    decodeLocPlacementFootprint,
+    encodeLocPlacementFootprint,
     encodeLocPlacementMetadataForWebGPU,
     getEncodedLocPlacementAnchor,
     getLocPlacementIdentity,
@@ -33,6 +37,8 @@ const decorationPlacement = packLocPlacementMetadata(
     10,
     11,
 );
+const wallFootprint = encodeLocPlacementFootprint(3, 2);
+const decorationFootprint = encodeLocPlacementFootprint(1, 1);
 
 const commands: DrawCommand[] = [
     {
@@ -50,6 +56,7 @@ const commands: DrawCommand[] = [
                 interactType: InteractType.LOC,
                 interactId: 42,
                 placementMetadata: wallPlacement,
+                placementFootprint: wallFootprint,
             },
         ],
     },
@@ -68,6 +75,7 @@ const commands: DrawCommand[] = [
                 interactType: InteractType.LOC,
                 interactId: 99,
                 placementMetadata: decorationPlacement,
+                placementFootprint: decorationFootprint,
             },
         ],
     },
@@ -92,18 +100,18 @@ assert.equal(modelData[trailerOffset + 1], LOC_PLACEMENT_TRAILER_VERSION);
 assert.equal(modelData[trailerOffset + 2], 2);
 assert.equal(modelData[trailerOffset + 3], 0);
 
-// The placement trailer must carry both halves of each renderer-neutral
-// placement value. Keeping the anchor in a second uint16 word leaves the
-// legacy WebGL2 header/instance ABI unchanged while allowing WebGPU to recover
-// the exact scene-tile anchor needed by diagonal boundary ordering.
+// Version 3 adds one packed footprint uint16 after identity + anchor while the
+// legacy WebGL2 model-info header/instance ABI remains unchanged.
 const payloadOffset = trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS;
 assert.equal(modelData[payloadOffset], getLocPlacementIdentity(wallPlacement));
 assert.equal(modelData[payloadOffset + 1], getEncodedLocPlacementAnchor(wallPlacement));
-assert.equal(modelData[payloadOffset + 2], getLocPlacementIdentity(decorationPlacement));
+assert.equal(modelData[payloadOffset + 2], wallFootprint);
+assert.equal(modelData[payloadOffset + 3], getLocPlacementIdentity(decorationPlacement));
 assert.equal(
-    modelData[payloadOffset + 3],
+    modelData[payloadOffset + 4],
     getEncodedLocPlacementAnchor(decorationPlacement),
 );
+assert.equal(modelData[payloadOffset + 5], decorationFootprint);
 
 const plan = createWebGPUStaticLocPlanFromData(
     modelData,
@@ -116,6 +124,9 @@ const plan = createWebGPUStaticLocPlanFromData(
 
 assert.deepEqual(Array.from(plan.placementMetadata), [wallPlacement, decorationPlacement]);
 assert.deepEqual(Array.from(plan.orderingAnchorTiles), [6, 69, 10, 11]);
+assert.deepEqual(Array.from(plan.orderingFootprints), [wallFootprint, decorationFootprint]);
+assert.deepEqual(decodeLocPlacementFootprint(plan.orderingFootprints[0]), { sizeX: 3, sizeY: 2 });
+assert.deepEqual(decodeLocPlacementFootprint(plan.orderingFootprints[1]), { sizeX: 1, sizeY: 1 });
 assert.deepEqual(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 0), { x: 6, y: 69 });
 assert.deepEqual(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 1), { x: 10, y: 11 });
 assert.equal(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 2), undefined);
@@ -130,8 +141,31 @@ assert.equal(
     encodeLocPlacementMetadataForWebGPU(decorationPlacement),
 );
 
+// Version-2 trailers remain readable. They carried identity + anchor but no
+// footprint, so v3 readers expose zero footprint sentinels.
+const anchorTrailerData = modelData.slice();
+anchorTrailerData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_ANCHOR_VERSION;
+anchorTrailerData[payloadOffset] = getLocPlacementIdentity(wallPlacement);
+anchorTrailerData[payloadOffset + 1] = getEncodedLocPlacementAnchor(wallPlacement);
+anchorTrailerData[payloadOffset + 2] = getLocPlacementIdentity(decorationPlacement);
+anchorTrailerData[payloadOffset + 3] = getEncodedLocPlacementAnchor(decorationPlacement);
+const anchorTrailerPlan = createWebGPUStaticLocPlanFromData(
+    anchorTrailerData,
+    [
+        [0, 3, 1],
+        [12, 6, 1],
+    ],
+    new Uint8Array([2, 3]),
+);
+assert.deepEqual(Array.from(anchorTrailerPlan.placementMetadata), [wallPlacement, decorationPlacement]);
+assert.deepEqual(Array.from(anchorTrailerPlan.orderingAnchorTiles), [6, 69, 10, 11]);
+assert.deepEqual(Array.from(anchorTrailerPlan.orderingFootprints), [
+    LOC_PLACEMENT_FOOTPRINT_NONE,
+    LOC_PLACEMENT_FOOTPRINT_NONE,
+]);
+
 // Version-1 trailers remain readable. They only carried placement identity, so
-// their decoded values intentionally have no anchor high word or ordering anchor.
+// their decoded values intentionally have no anchor or footprint.
 const legacyTrailerData = modelData.slice();
 legacyTrailerData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_LEGACY_VERSION;
 legacyTrailerData[payloadOffset] = getLocPlacementIdentity(wallPlacement);
@@ -153,6 +187,10 @@ assert.deepEqual(Array.from(legacyTrailerPlan.orderingAnchorTiles), [
     LOC_ORDERING_ANCHOR_NONE,
     LOC_ORDERING_ANCHOR_NONE,
     LOC_ORDERING_ANCHOR_NONE,
+]);
+assert.deepEqual(Array.from(legacyTrailerPlan.orderingFootprints), [
+    LOC_PLACEMENT_FOOTPRINT_NONE,
+    LOC_PLACEMENT_FOOTPRINT_NONE,
 ]);
 assert.equal(getLocOrderingAnchorTile(legacyTrailerPlan.orderingAnchorTiles, 0), undefined);
 assert.equal(
@@ -182,6 +220,7 @@ assert.deepEqual(Array.from(legacyPlan.orderingAnchorTiles), [
     LOC_ORDERING_ANCHOR_NONE,
     LOC_ORDERING_ANCHOR_NONE,
 ]);
+assert.deepEqual(Array.from(legacyPlan.orderingFootprints), [LOC_PLACEMENT_FOOTPRINT_NONE]);
 assert.equal(getLocOrderingAnchorTile(legacyPlan.orderingAnchorTiles, 0), undefined);
 assert.equal(legacyPlan.modelInfoWords[3], 77);
 
