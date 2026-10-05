@@ -8,6 +8,7 @@ import {
     WebGPUFacePriorityDepthComputeResources,
     createWebGPUFacePriorityDepthJobs,
     type WebGPUFacePriorityDepthDrawLike,
+    type WebGPUFacePriorityVisibilityState,
 } from "./WebGPUFacePriorityDepthCompute";
 import {
     WebGPUFacePrioritySortComputeResources,
@@ -41,10 +42,7 @@ type PassRuntime = {
     sort: WebGPUFacePrioritySortComputeResources;
 };
 
-const PASS_RUNTIMES = new WeakMap<
-    object,
-    Map<object, PassRuntime>
->();
+const PASS_RUNTIMES = new WeakMap<object, Map<object, PassRuntime>>();
 const REGISTERED_DISPOSERS = new WeakSet<object>();
 
 const IDENTITY_MATRIX = new Float32Array([
@@ -81,8 +79,7 @@ function getWorldEntityTransform(map: WebGPUTerrainMapResources): ArrayLike<numb
     // WebGPUTerrainMapResources retains the authoritative CPU matrix so it can
     // update only the transform bytes of its map uniforms. TypeScript's
     // `private` field is intentionally read through this narrow structural view
-    // so face-depth compute uses the exact same view -> world-entity transform
-    // order as the live static-scene vertex shader without duplicating state.
+    // so face-depth compute uses the same transform state without duplicating it.
     return (
         map as unknown as { worldEntityTransform?: Float32Array }
     ).worldEntityTransform ?? IDENTITY_MATRIX;
@@ -94,6 +91,18 @@ export function createWebGPUFacePriorityDepthTransform(
     target: Float32Array = new Float32Array(16),
 ): Float32Array {
     return multiplyMat4(target, getWorldEntityTransform(map), frame.viewMatrix);
+}
+
+export function createWebGPUFacePriorityVisibilityState(
+    frame: SceneFrameDescription,
+    map: WebGPUTerrainMapResources,
+): WebGPUFacePriorityVisibilityState {
+    return {
+        projectionMatrix: frame.projectionMatrix,
+        mapX: map.plan.renderPosX,
+        mapY: map.plan.renderPosY,
+        cullBackFace: frame.cullBackFace,
+    };
 }
 
 /**
@@ -204,6 +213,7 @@ function ensurePassRuntime(
         depth.faceDepthBuffer,
         sortResources.priorityBuffer,
         sortResources.sourceIndexBuffer,
+        depth.faceVisibilityBuffer,
     );
     const runtime: PassRuntime = {
         workItemCapacity,
@@ -216,10 +226,9 @@ function ensurePassRuntime(
 }
 
 /**
- * Prepare and encode exact depth + priority sorting for one static model pass.
- * The caller owns command submission so locs, ground items and doors for one
- * map/pass can share a single compute submission before the render command
- * buffer is eventually submitted.
+ * Prepare and encode exact depth + visibility + priority sorting for one static
+ * model pass. The caller owns command submission so locs, ground items and
+ * doors for one map/pass can share one compute submission before rendering.
  */
 export function prepareWebGPUFacePriorityPass(
     commandEncoder: WebGPUCommandEncoderLike,
@@ -265,6 +274,7 @@ export function prepareWebGPUFacePriorityPass(
         batch,
         transform,
         map.plan.borderSize,
+        createWebGPUFacePriorityVisibilityState(frame, map),
     );
     encodeWebGPUFacePriorityDepthAndSort(
         commandEncoder,
