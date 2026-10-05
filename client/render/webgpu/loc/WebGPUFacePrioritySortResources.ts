@@ -150,7 +150,6 @@ export class WebGPUFacePrioritySortResources {
     readonly modelSpanBuffer: WebGPUBufferLike;
     readonly sourceIndexBuffer: WebGPUBufferLike;
     readonly sortedIndexBuffer: WebGPUBufferLike;
-    readonly faceDepthBuffer: WebGPUBufferLike;
 
     constructor(
         device: WebGPUDeviceLike,
@@ -188,19 +187,13 @@ export class WebGPUFacePrioritySortResources {
             WEBGPU_BUFFER_USAGE.STORAGE,
             this.sourceIndices,
         );
-        // Start the sortable stream as an exact copy of the plain index stream.
-        // Rendering remains on the ordinary indexBuffer until the sort pass is enabled.
+        // Start the sortable stream as an exact copy of the plain source-index stream.
+        // Rendering remains on the ordinary indexBuffer until the exact sorter is activated.
         this.sortedIndexBuffer = createUploadedBuffer(
             device,
             `${labelPrefix}-face-priority-sorted-indices`,
             WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.INDEX,
             this.sourceIndices,
-        );
-        this.faceDepthBuffer = createUploadedBuffer(
-            device,
-            `${labelPrefix}-face-priority-depths`,
-            WEBGPU_BUFFER_USAGE.STORAGE,
-            new Float32Array(priorities.length),
         );
     }
 
@@ -213,7 +206,6 @@ export class WebGPUFacePrioritySortResources {
         this.modelSpanBuffer.destroy?.();
         this.sourceIndexBuffer.destroy?.();
         this.sortedIndexBuffer.destroy?.();
-        this.faceDepthBuffer.destroy?.();
         this.modelSpans.length = 0;
     }
 }
