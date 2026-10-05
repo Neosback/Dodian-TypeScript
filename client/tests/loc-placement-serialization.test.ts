@@ -9,6 +9,7 @@ import {
 import {
     LOC_PLACEMENT_NONE,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
+    LOC_PLACEMENT_TRAILER_LEGACY_VERSION,
     LOC_PLACEMENT_TRAILER_MAGIC,
     LOC_PLACEMENT_TRAILER_VERSION,
     encodeLocPlacementMetadataForWebGPU,
@@ -118,6 +119,33 @@ assert.equal(
 assert.equal(plan.modelInfoWords[7] & 0xffff, 99);
 assert.equal(
     plan.modelInfoWords[7] >>> 16,
+    encodeLocPlacementMetadataForWebGPU(decorationPlacement),
+);
+
+// Version-1 trailers remain readable. They only carried placement identity, so
+// their decoded values intentionally have no anchor high word.
+const legacyTrailerData = modelData.slice();
+legacyTrailerData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_LEGACY_VERSION;
+legacyTrailerData[payloadOffset] = getLocPlacementIdentity(wallPlacement);
+legacyTrailerData[payloadOffset + 1] = getLocPlacementIdentity(decorationPlacement);
+const legacyTrailerPlan = createWebGPUStaticLocPlanFromData(
+    legacyTrailerData,
+    [
+        [0, 3, 1],
+        [12, 6, 1],
+    ],
+    new Uint8Array([2, 3]),
+);
+assert.deepEqual(Array.from(legacyTrailerPlan.placementMetadata), [
+    getLocPlacementIdentity(wallPlacement),
+    getLocPlacementIdentity(decorationPlacement),
+]);
+assert.equal(
+    legacyTrailerPlan.modelInfoWords[3] >>> 16,
+    encodeLocPlacementMetadataForWebGPU(wallPlacement),
+);
+assert.equal(
+    legacyTrailerPlan.modelInfoWords[7] >>> 16,
     encodeLocPlacementMetadataForWebGPU(decorationPlacement),
 );
 
