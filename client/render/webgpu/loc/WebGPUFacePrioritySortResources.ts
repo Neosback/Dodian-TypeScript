@@ -5,8 +5,6 @@ import {
     type WebGPUDeviceLike,
 } from "../../backend/WebGPUPlatform";
 
-export type WebGPUFacePriorityIndexSource = "plain" | "priority";
-
 export interface WebGPUFacePriorityModelSpan {
     firstIndex: number;
     indexCount: number;
@@ -145,15 +143,18 @@ export class WebGPUFacePrioritySortResources {
     readonly modelSpans: WebGPUFacePriorityModelSpan[];
     readonly priorityWords: Uint32Array;
     readonly sourceIndices: Uint32Array;
+    readonly vertices: Uint8Array;
 
     readonly priorityBuffer: WebGPUBufferLike;
     readonly modelSpanBuffer: WebGPUBufferLike;
     readonly sourceIndexBuffer: WebGPUBufferLike;
-    readonly sortedIndexBuffer: WebGPUBufferLike;
+
+    private readonly disposeCallbacks = new Set<() => void>();
 
     constructor(
-        device: WebGPUDeviceLike,
-        labelPrefix: string,
+        readonly device: WebGPUDeviceLike,
+        readonly labelPrefix: string,
+        vertices: Uint8Array,
         indices: Int32Array,
         priorities: Uint8Array,
         modelSpans: Uint32Array,
@@ -168,6 +169,9 @@ export class WebGPUFacePrioritySortResources {
         for (let i = 0; i < indices.length; i++) {
             this.sourceIndices[i] = indices[i] >>> 0;
         }
+        // Retain an immutable CPU copy so pass-local depth compute resources can
+        // be rebuilt when animated/instanced submissions outgrow scratch capacity.
+        this.vertices = new Uint8Array(vertices);
 
         this.priorityBuffer = createUploadedBuffer(
             device,
@@ -187,25 +191,24 @@ export class WebGPUFacePrioritySortResources {
             WEBGPU_BUFFER_USAGE.STORAGE,
             this.sourceIndices,
         );
-        // Start the sortable stream as an exact copy of the plain source-index stream.
-        // Rendering remains on the ordinary indexBuffer until the exact sorter is activated.
-        this.sortedIndexBuffer = createUploadedBuffer(
-            device,
-            `${labelPrefix}-face-priority-sorted-indices`,
-            WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.INDEX,
-            this.sourceIndices,
-        );
     }
 
     resolveDraw(draw: FacePriorityDrawRangeLike): WebGPUFacePriorityDrawSpanRange {
         return resolveWebGPUFacePriorityDrawSpanRange(draw, this.modelSpans);
     }
 
+    registerDisposeCallback(callback: () => void): void {
+        this.disposeCallbacks.add(callback);
+    }
+
     dispose(): void {
+        for (const callback of this.disposeCallbacks) {
+            callback();
+        }
+        this.disposeCallbacks.clear();
         this.priorityBuffer.destroy?.();
         this.modelSpanBuffer.destroy?.();
         this.sourceIndexBuffer.destroy?.();
-        this.sortedIndexBuffer.destroy?.();
         this.modelSpans.length = 0;
     }
 }
