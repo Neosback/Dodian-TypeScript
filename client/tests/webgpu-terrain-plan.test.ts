@@ -27,7 +27,7 @@ const plan = createWebGPUTerrainDrawPlan({
     drawRangesLodPlanes: new Uint8Array([0, 2]),
     drawRangesLodAlpha: [[84, 3, 2]],
     drawRangesLodAlphaPlanes: new Uint8Array([3]),
-    borderSize: 0,
+    borderSize: 6,
     heightMapSize: 1,
     waterMaskTextureData: new Uint8Array(16),
 });
@@ -36,6 +36,7 @@ assert.equal(plan.mapX, 50);
 assert.equal(plan.mapY, 60);
 assert.equal(plan.renderPosX, 100);
 assert.equal(plan.renderPosY, 101);
+assert.equal(plan.borderSize, 6);
 assert.deepEqual(plan.draws, [
     { firstIndex: 0, indexCount: 3, instanceCount: 1, plane: 0 },
     { firstIndex: 3, indexCount: 3, instanceCount: 1, plane: 2 },
@@ -68,4 +69,4 @@ assert.throws(
     /4-byte aligned/,
 );
 
-console.log("webgpu terrain draw-plan and LOD checks passed");
+console.log("webgpu terrain draw-plan, border, and LOD checks passed");
