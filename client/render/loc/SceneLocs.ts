@@ -14,6 +14,7 @@ import { clampPlane } from "../../game/utils/PlaneUtil";
 import { InteractType } from "../../render/InteractType";
 import { ContourGroundType, SceneModel } from "../buffer/SceneBuffer";
 import { embeddedWallDecorationShift, wallDecorationNudge } from "../../rs/scene/WallDecorationOffset";
+import { packLocPlacementMetadata } from "./LocPlacementMetadata";
 import { SceneLocEntity } from "./SceneLocEntity";
 
 export type SceneLocs = {
@@ -132,9 +133,11 @@ export function createSceneModel(
     tileY: number,
     priority: number,
     planeCullLevel?: number,
+    secondaryPart: boolean = false,
 ): SceneModel {
     const id = getIdFromTag(sceneLoc.tag);
     const type: LocModelType = sceneLoc.flags & 0x3f;
+    const rotation = (sceneLoc.flags >> 6) & 0x3;
     const locType = locTypeLoader.load(id);
 
     const sceneX = sceneLoc.x + offsetX;
@@ -160,6 +163,7 @@ export function createSceneModel(
         priority,
         interactType: InteractType.LOC,
         interactId: id,
+        placementMetadata: packLocPlacementMetadata(type, rotation, secondaryPart),
     };
 }
 
@@ -172,8 +176,11 @@ export function createSceneLocEntity(
     level: number,
     priority: number,
     planeCullLevel?: number,
+    secondaryPart: boolean = false,
 ): SceneLocEntity {
     const id = getIdFromTag(sceneLoc.tag);
+    const type: LocModelType = sceneLoc.flags & 0x3f;
+    const rotation = (sceneLoc.flags >> 6) & 0x3;
     const locType = locTypeLoader.load(id);
 
     const contourGroundType =
@@ -196,6 +203,7 @@ export function createSceneLocEntity(
         priority,
         interactType: InteractType.LOC,
         interactId: id,
+        placementMetadata: packLocPlacementMetadata(type, rotation, secondaryPart),
     };
 }
 
@@ -349,6 +357,7 @@ export function getSceneLocs(
                             tileY,
                             1,
                             planeCullLevel,
+                            true,
                         ),
                     );
                 } else if (sourceTile.wall.entity1 instanceof LocEntity) {
@@ -362,6 +371,7 @@ export function getSceneLocs(
                             renderLevel,
                             1,
                             planeCullLevel,
+                            true,
                         ),
                     );
                 }
@@ -464,6 +474,7 @@ export function getSceneLocs(
                             tileY,
                             10,
                             planeCullLevel,
+                            true,
                         ),
                     );
                 } else if (sourceTile.wallDecoration.entity1 instanceof LocEntity) {
@@ -477,6 +488,7 @@ export function getSceneLocs(
                             renderLevel,
                             10,
                             planeCullLevel,
+                            true,
                         ),
                     );
                 }
