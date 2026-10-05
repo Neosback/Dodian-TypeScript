@@ -13,6 +13,7 @@ export const WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET = 8;
 export const WEBGPU_MAP_UNIFORM_TRANSFORM_BYTE_OFFSET =
     WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET * 4;
 export const WEBGPU_MAP_UNIFORM_FLOATS = 24;
+export const WEBGPU_MAP_UNIFORM_MAP_ID_WORD_OFFSET = 5;
 
 const IDENTITY_WORLD_ENTITY_TRANSFORM = new Float32Array([
     1, 0, 0, 0,
@@ -28,6 +29,11 @@ const TERRAIN_RESOURCES_BY_DEVICE = new WeakMap<
 
 function terrainResourceMapId(mapX: number, mapY: number): number {
     return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
+}
+
+/** Match the retained cache/scene map-square identity `(mapX << 8) + mapY`. */
+export function createWebGPUStaticSourceMapId(mapX: number, mapY: number): number {
+    return (((mapX | 0) << 8) + (mapY | 0)) >>> 0;
 }
 
 export interface WebGPUTerrainDrawPlanEntry {
@@ -145,6 +151,7 @@ export function createWebGPUMapUniformData(
     plane: number,
     loadTime: number,
     borderSize: number,
+    sourceMapId: number = createWebGPUStaticSourceMapId(mapX, mapY),
 ): Float32Array {
     const data = new Float32Array(WEBGPU_MAP_UNIFORM_FLOATS);
     data[0] = mapX;
@@ -152,6 +159,7 @@ export function createWebGPUMapUniformData(
     data[2] = plane;
     data[3] = loadTime;
     data[4] = borderSize;
+    new Uint32Array(data.buffer)[WEBGPU_MAP_UNIFORM_MAP_ID_WORD_OFFSET] = sourceMapId >>> 0;
     data.set(IDENTITY_WORLD_ENTITY_TRANSFORM, WEBGPU_MAP_UNIFORM_TRANSFORM_FLOAT_OFFSET);
     return data;
 }
@@ -222,6 +230,7 @@ export class WebGPUTerrainMapResources {
     ) {
         this.plan = createWebGPUTerrainDrawPlan(data);
         this.registryMapId = terrainResourceMapId(this.plan.mapX, this.plan.mapY);
+        const sourceMapId = createWebGPUStaticSourceMapId(this.plan.mapX, this.plan.mapY);
 
         this.vertexBuffer = createUploadedBuffer(
             device,
@@ -251,6 +260,7 @@ export class WebGPUTerrainMapResources {
             0,
             loadTime,
             data.borderSize,
+            sourceMapId,
         );
         this.sharedMapUniformBuffer = createUploadedBuffer(
             device,
@@ -278,6 +288,7 @@ export class WebGPUTerrainMapResources {
                     draw.plane,
                     loadTime,
                     data.borderSize,
+                    sourceMapId,
                 );
                 const mapUniformBuffer = createUploadedBuffer(
                     device,
