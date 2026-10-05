@@ -70,9 +70,7 @@ const device = {
             const labelled = buffer as WebGPUBufferLike & { label: string };
             const view = data as ArrayBufferView;
             let values: number[];
-            if (view instanceof Float32Array) {
-                values = Array.from(view);
-            } else if (view instanceof Uint32Array) {
+            if (view instanceof Uint32Array) {
                 values = Array.from(view);
             } else {
                 values = Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
@@ -117,7 +115,6 @@ assert.ok((usages.get("fixture-face-priority-model-spans")! & WEBGPU_BUFFER_USAG
 assert.ok((usages.get("fixture-face-priority-source-indices")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
 assert.ok((usages.get("fixture-face-priority-sorted-indices")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
 assert.ok((usages.get("fixture-face-priority-sorted-indices")! & WEBGPU_BUFFER_USAGE.INDEX) !== 0);
-assert.ok((usages.get("fixture-face-priority-depths")! & WEBGPU_BUFFER_USAGE.STORAGE) !== 0);
 
 assert.deepEqual(
     writes.find((write) => write.label === "fixture-face-priority-sorted-indices")?.values,
@@ -128,13 +125,9 @@ assert.deepEqual(
     writes.find((write) => write.label === "fixture-face-priorities")?.values,
     [11, 3, 0],
 );
-assert.deepEqual(
-    writes.find((write) => write.label === "fixture-face-priority-depths")?.values,
-    [0, 0, 0],
-);
 
 resources.dispose();
-assert.equal(destroyed.length, 5);
+assert.equal(destroyed.length, 4);
 assert.equal(resources.modelSpans.length, 0);
 
 console.log("webgpu face-priority resource and span-resolution checks passed");
