@@ -135,6 +135,10 @@ assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /contourGround == 1u/);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /getLocHeightInterp/);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /vec4<f32>\(position, 0\.0\)/);
 assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /faceDepths\[id\.x\] = trunc/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /projectionMatrix: mat4x4<f32>/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /faceVisibility: array<u32>/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /projectedFrontFacing/);
+assert.match(WEBGPU_FACE_PRIORITY_DEPTH_SHADER, /uniforms\.cullBackFace == 0u/);
 
 const createdBuffers: Array<Record<string, unknown>> = [];
 const writes: Array<{ label: string; bytes: Uint8Array }> = [];
@@ -188,7 +192,15 @@ const resources = new WebGPUFacePriorityDepthComputeResources(
     { label: "model-info" } as WebGPUBufferLike,
 );
 assert.equal(shaderSource, WEBGPU_FACE_PRIORITY_DEPTH_SHADER);
-assert.equal(resources.prepare(batch, identity, 8), 6);
+assert.equal(
+    resources.prepare(batch, identity, 8, {
+        projectionMatrix: identity,
+        mapX: 12,
+        mapY: -3,
+        cullBackFace: true,
+    }),
+    6,
+);
 
 const jobWrite = writes.find((write) => write.label === "fixture-face-priority-depth-jobs");
 assert.ok(jobWrite);
@@ -203,8 +215,17 @@ const uniformWords = new Uint32Array(
     uniformWrite!.bytes.byteOffset,
     uniformWrite!.bytes.byteLength / 4,
 );
+const uniformFloats = new Float32Array(
+    uniformWrite!.bytes.buffer,
+    uniformWrite!.bytes.byteOffset,
+    uniformWrite!.bytes.byteLength / 4,
+);
 assert.equal(uniformWords[16], 6);
 assert.equal(new Int32Array(uniformWords.buffer, uniformWords.byteOffset, uniformWords.length)[17], 8);
+assert.equal(uniformWords[18], 1, "live culling must be represented in depth uniforms");
+assert.deepEqual(Array.from(uniformFloats.slice(20, 36)), Array.from(identity));
+assert.equal(uniformFloats[36], 12);
+assert.equal(uniformFloats[37], -3);
 
 const commandEncoder = {
     beginComputePass() {
@@ -231,7 +252,8 @@ assert.throws(
 );
 
 resources.dispose();
-assert.equal(destroyed.length, 4);
+assert.equal(destroyed.length, 5);
 assert.ok(createdBuffers.some((descriptor) => descriptor.label === "fixture-face-priority-depths"));
+assert.ok(createdBuffers.some((descriptor) => descriptor.label === "fixture-face-priority-visibility"));
 
-console.log("webgpu face-priority depth math, job expansion, and compute plumbing checks passed");
+console.log("webgpu face-priority depth, visibility, job expansion, and compute plumbing checks passed");
