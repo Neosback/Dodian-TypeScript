@@ -28,10 +28,15 @@ export const LOC_PLACEMENT_ANCHOR_NONE = 0;
  * Placement metadata is appended after the legacy model-info payload. WebGL2
  * never indexes this tail, while WebGPU can opt in without changing the worker
  * packet shape or the WebGL texture ABI.
+ *
+ * Version 1 stored one identity uint16 per instance. Version 2 stores two
+ * uint16 words per instance: identity followed by the optional anchor word.
  */
 export const LOC_PLACEMENT_TRAILER_MAGIC = 0x4c50; // "LP"
-export const LOC_PLACEMENT_TRAILER_VERSION = 1;
+export const LOC_PLACEMENT_TRAILER_LEGACY_VERSION = 1;
+export const LOC_PLACEMENT_TRAILER_VERSION = 2;
 export const LOC_PLACEMENT_TRAILER_HEADER_WORDS = 4;
+export const LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE = 2;
 
 /** WebGPU uses zero in the upper half of info.w to mean no placement metadata. */
 export const LOC_PLACEMENT_GPU_NONE = 0;
@@ -105,6 +110,13 @@ export function getEncodedLocPlacementAnchor(metadata: number): number {
     return (metadata >>> ANCHOR_SHIFT) & 0xffff;
 }
 
+export function combineLocPlacementMetadata(identity: number, encodedAnchor: number): number {
+    return (
+        (identity & LOC_PLACEMENT_IDENTITY_MASK) |
+        ((encodedAnchor & LOC_PLACEMENT_IDENTITY_MASK) << ANCHOR_SHIFT)
+    ) >>> 0;
+}
+
 export function packLocPlacementMetadata(
     type: LocModelType | number,
     rotation: number,
@@ -124,7 +136,7 @@ export function packLocPlacementMetadata(
         anchorTileX === undefined
             ? LOC_PLACEMENT_ANCHOR_NONE
             : encodeLocPlacementAnchorTile(anchorTileX, anchorTileY!);
-    return (identity | (encodedAnchor << ANCHOR_SHIFT)) >>> 0;
+    return combineLocPlacementMetadata(identity, encodedAnchor);
 }
 
 export function unpackLocPlacementMetadata(
