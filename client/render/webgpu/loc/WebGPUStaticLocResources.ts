@@ -1,5 +1,6 @@
 import type { DrawRange } from "../../DrawRange";
 import type { LocGeometryData } from "../../loader/SdMapData";
+import { createLocOrderingAnchorTiles } from "../../loc/LocOrderingMetadata";
 import {
     LOC_PLACEMENT_NONE,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
@@ -37,6 +38,8 @@ export interface WebGPUStaticLocPlan {
     modelInfoWords: Uint32Array;
     /** Full renderer-neutral placement values parallel to model-info instances. */
     placementMetadata: Uint32Array;
+    /** Decoded x/y ordering anchors parallel to model-info instances, with -1 sentinels. */
+    orderingAnchorTiles: Int16Array;
 }
 
 export type WebGPUStaticLocGeometryData = Pick<
@@ -55,6 +58,10 @@ export interface WebGPUStaticLocPassResources {
     readonly bindGroup: WebGPUBindGroupLike;
     readonly draws: WebGPUStaticLocDrawPlanEntry[];
     readonly drawsBySourceIndex: Array<WebGPUStaticLocDrawPlanEntry | undefined>;
+    /** CPU-side ordering identity retained for delayed-wall ordering. */
+    readonly placementMetadata: Uint32Array;
+    /** CPU-side x/y anchors indexed by model-info instance. */
+    readonly orderingAnchorTiles: Int16Array;
 }
 
 export interface WebGPUAnimatedLocState {
@@ -208,6 +215,7 @@ export function createWebGPUStaticLocPlanFromData(
     }
 
     const placementMetadata = readPlacementMetadataTrailer(modelData, drawCount, maxInstance);
+    const orderingAnchorTiles = createLocOrderingAnchorTiles(placementMetadata);
     const modelInfoWords = new Uint32Array(Math.max(4, maxInstance * 4));
     for (let i = 0; i < maxInstance; i++) {
         const sourceOffset = headerWords + i * 4;
@@ -222,7 +230,7 @@ export function createWebGPUStaticLocPlanFromData(
             (lowWord & 0xffff) | ((encodedPlacement & 0xffff) << 16);
     }
 
-    return { draws, sourceIndices, modelInfoWords, placementMetadata };
+    return { draws, sourceIndices, modelInfoWords, placementMetadata, orderingAnchorTiles };
 }
 
 export function createWebGPUStaticLocPlan(
@@ -280,6 +288,8 @@ function createPassResources(
         bindGroup,
         draws: plan.draws,
         drawsBySourceIndex,
+        placementMetadata: plan.placementMetadata,
+        orderingAnchorTiles: plan.orderingAnchorTiles,
     };
 }
 
