@@ -42,20 +42,35 @@ The renderer now preserves exact priority data separately from the packed vertex
 - Alignment is validated before WebGPU static-loc resources accept the geometry. The spans must cover the complete model-only source index stream exactly once, in emission order.
 - Ordinary loc geometry, animated loc frame geometry, independent door geometry, and authoritative ground-item geometry all use the same sidecar contract.
 - Worker map payloads transfer loc and door priority arrays explicitly. Ground items carry the arrays through their existing main-thread geometry snapshot.
-- `WebGPUStaticLocResources` currently retains the sidecar and model spans on the CPU only. It does not upload, reorder, or select a different index buffer yet.
+- `WebGPUStaticLocResources` currently retains the sidecar and model spans on the CPU only.
 - Terrain and NPC scene buffers remain on the existing `SceneBuffer` path and are not forced into this model-only sidecar contract.
 
 `client/tests/exact-face-priority-sidecar.test.ts` covers triangle alignment, model-span boundaries, model-wide priority fallback, invalid priorities, incomplete spans, and empty geometry. Door and ground-item adapter tests also verify that the sidecar is forwarded without reconstruction.
 
+## GPU sort-resource foundation checkpoint
+
+The first isolated WebGPU sort-resource layer is now implemented without changing the live render path.
+
+- `WebGPUFacePrioritySortResources` expands the exact `uint8` CPU priorities to one `u32` storage word per triangle for straightforward WGSL storage access. The CPU payload remains the compact byte sidecar.
+- Model spans are validated once more at the GPU-resource boundary and converted into explicit `firstIndex/indexCount/firstFace/faceCount` records for CPU scheduling.
+- A pure draw-range resolver maps a draw to the exact contiguous model span or spans it covers. It rejects draws that start or end inside a model span, preventing a later compute pass from accidentally sorting two models as one.
+- Zero-count animation slots resolve to an empty span range and can be rebound when the authoritative animation frame changes.
+- The resource layer allocates separate WebGPU storage for priorities, source indices, model-span words, and face depths.
+- It also allocates a storage-plus-index sorted-index target initialized as an exact copy of the source index stream. Selecting it before a sort would therefore remain geometrically safe, although the live renderer does not select it yet.
+- `WebGPUPlatform` now exposes the minimal compute-pipeline and compute-pass interfaces needed by the upcoming depth/sort dispatch layer.
+- The existing `WebGPUStaticLocResources.indexBuffer` remains the only index source used by rendering in this checkpoint, so output is unchanged.
+
+`client/tests/webgpu-face-priority-resources.test.ts` covers exact priority expansion, model-span planning, merged-draw resolution, animation-style zero ranges, partial-span rejection, storage/index usage flags, source-to-sorted initialization, and resource disposal.
+
 ## Remaining WebGPU implementation contract
 
-The next implementation checkpoint should preserve the existing vertex buffer and consume the sidecar as separate priority-sort resources:
+The next implementation checkpoint should connect the resource foundation to active static geometry and then implement depth generation:
 
-1. Upload exact priorities and the model-span metadata for WebGPU priority-sort resources without changing WebGL2 buffers.
-2. Associate each active draw/frame with the model span or spans it references so sorting remains model-local for merged, instanced, and animated geometry.
-3. Compute camera-dependent face depth from the existing packed vertex positions and placed-model transform.
-4. Run the priority algorithm per model and write a sorted index stream. The CPU reference remains the validation oracle for the compute implementation.
-5. Keep an explicit `plain` versus `priority` index-source switch for A/B validation and to avoid sort-resource memory for geometry that does not need it.
+1. Instantiate `WebGPUFacePrioritySortResources` for ordinary loc, door, and ground-item resources only when exact-priority geometry exists.
+2. Associate every opaque/alpha/full-detail/LOD draw with its resolved model-span range and refresh that range when an animated loc selects a new frame.
+3. Keep an explicit `plain` versus `priority` index-source switch, defaulted to `plain`, before any compute dispatch changes rendering.
+4. Compute camera-dependent face depth from the existing packed vertex positions and placed-model transform.
+5. Run the priority algorithm per model and write the sorted index stream. The CPU reference remains the validation oracle for the compute implementation.
 6. Retain a small per-priority/model depth bias after sorting so the depth buffer agrees with painter order on coplanar faces.
 
 ## Composition with delayed-wall ordering
@@ -71,7 +86,7 @@ The face sorter therefore must not replace or bypass the type-1/type-3 delayed-w
 
 Animated locs can change index offset/count each frame. Priority resources must follow the selected animation frame without introducing a second animation clock. The authoritative WebGL animation state remains the source of the active frame, just as it is for the current WebGPU animated-loc draw-range path.
 
-The sidecar already records each emitted animation frame as its own model span. The remaining GPU checkpoint must resolve the currently selected frame range to that span before dispatching or selecting sorted indices.
+The sidecar already records each emitted animation frame as its own model span. The draw-span resolver now provides the boundary check needed to map the currently selected frame to that span; wiring that refresh into `applyWebGPUAnimatedLocDrawRanges` remains the next integration step.
 
 ## Completion criteria
 
@@ -85,4 +100,4 @@ The overall face-priority migration is complete only when:
 - the temporary three-bit face-priority depth nudge is no longer responsible for painter correctness,
 - WebGL2 fallback data remains unchanged.
 
-The first item is implemented by the sidecar checkpoint. GPU sorting and render-path selection remain pending.
+The exact-priority data path and isolated GPU sort-resource foundation are implemented. Live resource integration, depth compute, sorting, and render-path selection remain pending.
