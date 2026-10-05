@@ -14,6 +14,7 @@ import {
     encodeLocPlacementMetadataForWebGPU,
     getLocPlacementTrailerWordOffset,
 } from "../../loc/LocPlacementMetadata";
+import { validateExactFacePriorityAlignment } from "../../priority/ExactFacePrioritySceneBuffer";
 import {
     WEBGPU_BUFFER_USAGE,
     type WebGPUBindGroupLayoutLike,
@@ -50,6 +51,8 @@ export type WebGPUStaticLocGeometryData = Pick<
     LocGeometryData,
     | "vertices"
     | "indices"
+    | "facePriorities"
+    | "facePriorityModelSpans"
     | "modelTextureData"
     | "drawRanges"
     | "drawRangesPlanes"
@@ -388,6 +391,10 @@ export class WebGPUStaticLocResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
     readonly heightMap: WebGPUHeightMapResources;
+    /** Exact uncompressed 0..11 priority for each source triangle. CPU-only until the sort checkpoint. */
+    readonly facePriorities: Uint8Array;
+    /** `[firstIndex, indexCount]` pairs preserving model-local sort boundaries. */
+    readonly facePriorityModelSpans: Uint32Array;
     readonly opaque?: WebGPUStaticLocPassResources;
     readonly alpha?: WebGPUStaticLocPassResources;
     readonly lod?: WebGPUStaticLocPassResources;
@@ -406,6 +413,14 @@ export class WebGPUStaticLocResources {
         heightMapTextureData: Int16Array,
         registerForAnimation: boolean = true,
     ) {
+        validateExactFacePriorityAlignment(
+            geometry.indices.length,
+            geometry.facePriorities,
+            geometry.facePriorityModelSpans,
+        );
+        this.facePriorities = geometry.facePriorities;
+        this.facePriorityModelSpans = geometry.facePriorityModelSpans;
+
         this.vertexBuffer = createUploadedBuffer(
             device,
             `loc-${mapX}-${mapY}-vertices`,
