@@ -1,0 +1,180 @@
+name: Apply WebGPU delayed wall integration
+
+on:
+  push:
+    branches:
+      - feat/webgpu-renderer
+    paths:
+      - .github/workflows/apply-webgpu-delayed-wall.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/webgpu-renderer
+          fetch-depth: 0
+
+      - name: Apply renderer integration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          terrain_path = Path('client/render/webgpu/terrain/WebGPUTerrainMapResources.ts')
+          terrain = terrain_path.read_text()
+          old = '''export interface WebGPUTerrainDrawPlan {
+              mapX: number;
+              mapY: number;
+              renderPosX: number;
+              renderPosY: number;
+              draws: WebGPUTerrainDrawPlanEntry[];'''
+          new = '''export interface WebGPUTerrainDrawPlan {
+              mapX: number;
+              mapY: number;
+              renderPosX: number;
+              renderPosY: number;
+              borderSize: number;
+              draws: WebGPUTerrainDrawPlanEntry[];'''
+          if old not in terrain:
+              raise SystemExit('terrain plan interface anchor not found')
+          terrain = terrain.replace(old, new, 1)
+          old = '''        renderPosX: data.renderPosX ?? data.mapX,
+                  renderPosY: data.renderPosY ?? data.mapY,
+                  draws,'''
+          new = '''        renderPosX: data.renderPosX ?? data.mapX,
+                  renderPosY: data.renderPosY ?? data.mapY,
+                  borderSize: data.borderSize | 0,
+                  draws,'''
+          if old not in terrain:
+              raise SystemExit('terrain plan return anchor not found')
+          terrain = terrain.replace(old, new, 1)
+          terrain_path.write_text(terrain)
+
+          renderer_path = Path('client/render/webgpu/WebGPUStaticSceneRenderer.ts')
+          renderer = renderer_path.read_text()
+          old = '''import { WebGPUStaticDoorResources } from "./loc/WebGPUStaticDoorResources";
+          import { WebGPUStaticGroundItemResources } from "./ground/WebGPUStaticGroundItemResources";'''
+          new = '''import { WebGPUStaticDoorResources } from "./loc/WebGPUStaticDoorResources";
+          import { drawWebGPUOrderedStaticGeometry } from "./loc/WebGPUStaticLocDrawOrdering";
+          import { WebGPUStaticGroundItemResources } from "./ground/WebGPUStaticGroundItemResources";'''
+          if old not in renderer:
+              raise SystemExit('renderer import anchor not found')
+          renderer = renderer.replace(old, new, 1)
+
+          opaque_old = '''            const locs = this.locsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          locs,
+                          locs?.getPass(false, lod),
+                          locPipeline,
+                      );
+                      const groundItems = this.groundItemsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          groundItems,
+                          groundItems?.getPass(false, lod),
+                          locPipeline,
+                      );
+                      const doors = this.doorsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          doors,
+                          doors?.getPass(false, lod),
+                          locPipeline,
+                      );'''
+          opaque_new = '''            const locs = this.locsById.get(id);
+                      const groundItems = this.groundItemsById.get(id);
+                      const doors = this.doorsById.get(id);
+                      drawWebGPUOrderedStaticGeometry(pass, frame, map, locPipeline, [
+                          { resources: locs, staticPass: locs?.getPass(false, lod) },
+                          { resources: groundItems, staticPass: groundItems?.getPass(false, lod) },
+                          { resources: doors, staticPass: doors?.getPass(false, lod) },
+                      ]);'''
+          if opaque_old not in renderer:
+              raise SystemExit('opaque static geometry block not found')
+          renderer = renderer.replace(opaque_old, opaque_new, 1)
+
+          transparent_old = '''            const locs = this.locsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          locs,
+                          locs?.getPass(true, lod),
+                          locPipeline,
+                      );
+                      const groundItems = this.groundItemsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          groundItems,
+                          groundItems?.getPass(true, lod),
+                          locPipeline,
+                      );
+                      const doors = this.doorsById.get(id);
+                      this.drawStaticGeometry(
+                          pass,
+                          frame,
+                          map,
+                          doors,
+                          doors?.getPass(true, lod),
+                          locPipeline,
+                      );'''
+          transparent_new = '''            const locs = this.locsById.get(id);
+                      const groundItems = this.groundItemsById.get(id);
+                      const doors = this.doorsById.get(id);
+                      drawWebGPUOrderedStaticGeometry(pass, frame, map, locPipeline, [
+                          { resources: locs, staticPass: locs?.getPass(true, lod) },
+                          { resources: groundItems, staticPass: groundItems?.getPass(true, lod) },
+                          { resources: doors, staticPass: doors?.getPass(true, lod) },
+                      ]);'''
+          if transparent_old not in renderer:
+              raise SystemExit('transparent static geometry block not found')
+          renderer = renderer.replace(transparent_old, transparent_new, 1)
+          renderer_path.write_text(renderer)
+          PY
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run WebGPU foundation tests
+        run: yarn workspace @xrsps/client test:webgpu-foundation
+
+      - name: Typecheck client
+        run: yarn workspace @xrsps/client typecheck
+
+      - name: Commit integration
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add client/render/webgpu/WebGPUStaticSceneRenderer.ts client/render/webgpu/terrain/WebGPUTerrainMapResources.ts
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "feat(client): apply diagonal wall submission ordering"
+          git push origin HEAD:feat/webgpu-renderer
