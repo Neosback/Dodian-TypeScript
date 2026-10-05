@@ -87,6 +87,23 @@
       },
       {
         "files": [
+          "game/audio/**/*.{ts,tsx}",
+          "game/login/**/*.{ts,tsx}",
+          "game/menu/**/*.{ts,tsx}",
+          "game/movement/**/*.{ts,tsx}",
+          "game/roof/**/*.{ts,tsx}",
+          "game/sync/**/*.{ts,tsx}",
+          "render/**/*.{ts,tsx}",
+          "widgets/gl/**/*.{ts,tsx}",
+          "ui/item/**/*.{ts,tsx}",
+          "network/serverConnection/**/*.{ts,tsx}"
+        ],
+        "rules": {
+          "@typescript-eslint/no-unused-vars": "off"
+        }
+      },
+      {
+        "files": [
           "common/utils/*.js"
         ],
         "rules": {
