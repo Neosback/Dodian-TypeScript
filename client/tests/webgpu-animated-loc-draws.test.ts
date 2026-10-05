@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 
-import type { WebGPUBufferLike } from "../render/backend/WebGPUPlatform";
 import type { WebGPUFacePrioritySortResources } from "../render/webgpu/loc/WebGPUFacePrioritySortResources";
 import {
     applyWebGPUAnimatedLocDrawRanges,
     refreshWebGPUStaticLocFacePrioritySpans,
-    resolveWebGPUStaticLocIndexBuffer,
     type WebGPUAnimatedLocState,
     type WebGPUStaticLocDrawPlanEntry,
     type WebGPUStaticLocPassResources,
@@ -23,10 +21,7 @@ function makePass(draw: WebGPUStaticLocDrawPlanEntry): WebGPUStaticLocPassResour
     };
 }
 
-const plainIndexBuffer = { label: "plain" } as WebGPUBufferLike;
-const sortedIndexBuffer = { label: "priority" } as WebGPUBufferLike;
 const prioritySort = {
-    sortedIndexBuffer,
     resolveDraw(draw: { firstIndex: number; indexCount: number }) {
         if (draw.firstIndex < 0 || draw.indexCount < 0 || draw.firstIndex % 3 !== 0 || draw.indexCount % 3 !== 0) {
             throw new Error("triangle-aligned");
@@ -39,16 +34,6 @@ const prioritySort = {
         };
     },
 } as unknown as WebGPUFacePrioritySortResources;
-
-assert.equal(resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, prioritySort, "plain"), plainIndexBuffer);
-assert.equal(
-    resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, prioritySort, "priority"),
-    sortedIndexBuffer,
-);
-assert.throws(
-    () => resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, undefined, "priority"),
-    /without face-priority sort resources/,
-);
 
 const initialPriorityDraw: WebGPUStaticLocDrawPlanEntry = {
     firstIndex: 3,
@@ -182,4 +167,4 @@ assert.deepEqual(opaqueDraw.facePrioritySpan, {
     faceCount: 0,
 });
 
-console.log("webgpu animated loc draw-range and face-priority integration checks passed");
+console.log("webgpu animated loc draw-range and face-priority span checks passed");
