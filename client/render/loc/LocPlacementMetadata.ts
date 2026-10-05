@@ -24,6 +24,9 @@ export const LOC_PLACEMENT_TRAILER_MAGIC = 0x4c50; // "LP"
 export const LOC_PLACEMENT_TRAILER_VERSION = 1;
 export const LOC_PLACEMENT_TRAILER_HEADER_WORDS = 4;
 
+/** WebGPU uses zero in the upper half of info.w to mean no placement metadata. */
+export const LOC_PLACEMENT_GPU_NONE = 0;
+
 const TYPE_MASK = 0x3f;
 const ROTATION_MASK = 0x3;
 const ROTATION_SHIFT = 6;
@@ -110,4 +113,24 @@ export function hasLocPlacementClass(
 /** Word offset immediately after draw headers and four-word instance records. */
 export function getLocPlacementTrailerWordOffset(drawCount: number, instanceCount: number): number {
     return (Math.max(0, drawCount | 0) + Math.max(0, instanceCount | 0)) * 4;
+}
+
+/**
+ * WebGPU packs placement into the unused upper 16 bits of the fourth model-info
+ * word. Add one so a valid WALL/rotation-0 primary value (raw zero) does not
+ * collide with the no-metadata sentinel.
+ */
+export function encodeLocPlacementMetadataForWebGPU(metadata: number): number {
+    if ((metadata & 0xffff) === LOC_PLACEMENT_NONE) {
+        return LOC_PLACEMENT_GPU_NONE;
+    }
+    return ((metadata & 0xffff) + 1) & 0xffff;
+}
+
+export function decodeLocPlacementMetadataFromWebGPU(encoded: number): number {
+    const value = encoded & 0xffff;
+    if (value === LOC_PLACEMENT_GPU_NONE) {
+        return LOC_PLACEMENT_NONE;
+    }
+    return (value - 1) & 0xffff;
 }
