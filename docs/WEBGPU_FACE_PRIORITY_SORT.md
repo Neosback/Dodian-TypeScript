@@ -4,7 +4,15 @@ This note tracks the dedicated face-priority work from `WEBGPU_MIGRATION_CHECKPO
 
 ## Ground truth
 
-The software model painter walks camera-visible faces from far to near and, when exact per-face priorities exist, feeds twelve stable buckets (`0..11`). Priorities `0..9` are emitted in numeric order with the special `10` then `11` stream interleaved at three thresholds:
+The retained software/RuneLite model painter forms its painter stream only from faces that survive two source-side rules:
+
+1. sentinel faces with `faceColors3 == -2` do not participate;
+2. submitted faces must satisfy the projected winding test
+   `(aX-bX)*(cY-bY) - (cX-bX)*(aY-bY) > 0`.
+
+`SceneBuffer` already removes the `-2` sentinel faces while building the static geometry, so they never enter the exact-priority sidecar.
+
+For the remaining camera-visible faces, the painter walks far to near and feeds twelve stable priority buckets (`0..11`). Priorities `0..9` are emitted in numeric order with the special `10` then `11` stream interleaved at three thresholds:
 
 - before priority `0`, while special depth is strictly greater than the average depth of priorities `1` and `2`;
 - before priority `3`, while special depth is strictly greater than the average depth of priorities `3` and `4`;
@@ -38,18 +46,18 @@ Ordinary locs, animated loc frame geometry, doors, and ground items all use this
 
 ## Invariant GPU resources
 
-`WebGPUFacePrioritySortResources` now owns only geometry-invariant data:
+`WebGPUFacePrioritySortResources` owns geometry-invariant data:
 
 - exact priority words;
 - validated model spans;
 - the source index stream;
 - an immutable CPU copy of the packed 12-byte vertices used when pass-local compute scratch must be rebuilt.
 
-The old geometry-global/source-sized `sortedIndexBuffer` placeholder has been removed. It could not represent two placed instances that reuse the same animated source geometry but receive different contour-dependent depths.
+The old geometry-global/source-sized `sortedIndexBuffer` placeholder was removed because it could not represent two placed instances that reuse the same animated source geometry but receive different contour-dependent depths.
 
 The resource also owns cleanup callbacks so all pass-local depth/sort scratch is destroyed when loc/door/ground-item geometry is replaced or removed.
 
-## Camera-dependent depth compute
+## Camera-dependent depth and visibility compute
 
 `WebGPUFacePriorityDepthCompute.ts` expands submitted model spans into a dense instance-aware work stream:
 
@@ -57,7 +65,7 @@ The resource also owns cleanup callbacks so all pass-local depth/sort scratch is
 
 A source face may appear multiple times. This is required for animated loc groups and any other instanced submission whose `ContourGroundType.VERTEX` deformation differs by placement.
 
-The shader:
+The depth side of the shader:
 
 - reads the existing 12-byte packed vertex stream as raw `u32` words;
 - follows the exact source index stream;
@@ -66,18 +74,29 @@ The shader:
 - computes the integer/truncating average camera-relative Z;
 - writes dense per-submission face depths.
 
-The transform uses the linear portion of `worldEntityTransform * viewMatrix`. Translation is intentionally ignored with `w = 0` because it is constant within one placed model. World-entity rotation/scale still affects the linear depth quantity.
+The depth transform uses the linear portion of `worldEntityTransform * viewMatrix`. Translation is intentionally ignored with `w = 0` because it is constant within one placed model. World-entity rotation/scale still affects the linear depth quantity.
+
+The same compute pass now also writes one `u32` visibility word per work item. Visibility uses the fully placed and contoured world position rather than the translation-free depth position because perspective winding depends on actual placement. It uses:
+
+- the current map render position (`renderPosX/renderPosY`);
+- the same `worldEntityTransform * viewMatrix` order as the patched static-scene shader;
+- the current frame projection matrix;
+- the existing `SceneFrameDescription.cullBackFace` switch.
+
+When culling is disabled every submitted face is marked visible. When culling is enabled, the compute shader evaluates the same positive projected-winding convention used by the retained painter and by the WebGPU pipelines' `frontFace: "ccw"` / `cullMode: "back"` configuration. Faces whose clip-space `w` is non-positive are excluded from priority membership.
+
+`WebGPUFacePriorityVisibility.ts` provides the CPU projected-winding oracle used by focused fixtures.
 
 ## Exact 0..11 GPU sorter
 
 `WebGPUFacePrioritySortCompute.ts` reproduces the CPU oracle's bucket/threshold behavior without assuming a model fits inside one workgroup.
 
-Each work item analytically derives its final rank by computing:
+Each visible work item analytically derives its final rank by computing:
 
-1. counts for all twelve priority buckets;
-2. depth sums and counts for the three threshold pairs;
-3. its stable far-to-near rank within its own priority bucket;
-4. the size of the priority-10-then-11 special prefix above each threshold;
+1. counts for all twelve priority buckets from visible faces only;
+2. depth sums and counts for the three threshold pairs from visible faces only;
+3. its stable far-to-near rank within its own visible priority bucket;
+4. the size of the visible priority-10-then-11 special prefix above each threshold;
 5. its exact final painter rank.
 
 The shader preserves:
@@ -90,13 +109,15 @@ The shader preserves:
 - non-monotonic threshold behavior;
 - model-local sorting even when one draw covers several contiguous model spans.
 
+Back faces no longer contribute to bucket counts, threshold averages, bucket ranks, or special-stream prefix counts. Their output slots are moved to a deterministic source-stable tail and encoded as degenerate triangles by repeating one source vertex index three times. This keeps every prepared draw's index count fixed while guaranteeing the rejected tail cannot rasterize, avoiding GPU readback or a new indirect-draw dependency.
+
 The result is written into a dense `STORAGE | INDEX` buffer. Duplicate source submissions receive separate output ranges.
 
 ## A/B static-scene activation
 
-Status: activated for loc-like submitted model spans in the WebGPU comparison path.
+Status: activated for loc-like submitted model spans in the WebGPU comparison path, including visibility-aware priority membership.
 
-`WebGPUFacePriorityPassActivation.ts` connects the depth and sort stages to live static model passes.
+`WebGPUFacePriorityPassActivation.ts` connects depth, visibility, and exact sorting to live static model passes.
 
 ### Instanced draws
 
@@ -107,7 +128,7 @@ Authoritative draw metadata remains unchanged. Before compute, an instanced draw
 - the source model span remains unchanged;
 - roof-hidden and zero-count draws do not enter compute.
 
-This gives every placement its own depth and sorted-index result while preserving the authoritative animation/draw state.
+This gives every placement its own contour-dependent depth, projected visibility, and sorted-index result while preserving authoritative animation/draw state.
 
 The resulting one-instance draws also improve whole-model delayed-wall ordering because placement metadata, anchors, and footprints are resolved from the actual instance rather than only the first instance of a merged draw.
 
@@ -117,15 +138,15 @@ Depth/sort resources are cached per static pass and grow to the next power-of-tw
 
 Opaque, alpha, full-detail, and LOD passes therefore have independent scratch/output buffers while sharing immutable geometry data.
 
-Geometry replacement/disposal tears down those cached runtimes through the invariant sort resource cleanup hook.
+Geometry replacement/disposal tears down those cached runtimes through the invariant sort resource cleanup hook. The depth runtime now owns a fifth scratch resource for the per-work-item visibility mask.
 
 ### Compute -> render ordering
 
-`drawWebGPUOrderedStaticGeometry` prepares locs, ground items, and doors for the current map/pass, records depth then sort into a compute command buffer, and submits that command buffer before the A/B renderer later submits its render command buffer.
+`drawWebGPUOrderedStaticGeometry` prepares locs, ground items, and doors for the current map/pass, records depth/visibility then sort into a compute command buffer, and submits that command buffer before the A/B renderer later submits its render command buffer.
 
 WebGPU queue ordering therefore guarantees:
 
-`depth compute -> exact sort compute -> index-buffer draw`
+`depth + visibility compute -> exact visible-face sort -> index-buffer draw`
 
 The render scheduler binds each prepared pass's dense sorted buffer and uses remapped `firstIndex/indexCount` ranges while leaving delayed-wall whole-model ordering intact.
 
@@ -144,35 +165,35 @@ The independent placement rules remain:
 
 WebGL2 shader/data behavior is unchanged.
 
-## Visibility/culling boundary
+## Visibility/culling parity status
 
-One remaining semantic boundary is intentionally not hidden by this checkpoint.
+The known face-priority threshold-pollution bug is now closed for the submitted static loc-like passes: a hardware-back-facing triangle no longer changes threshold averages or priority-10/11 splice positions before being rejected by rasterization.
 
-The original software painter forms its priority buckets from faces that survive its camera-visibility/front-face walk. The current WebGPU compute batch is formed from submitted model spans, while rasterizer face culling remains a separate renderer policy controlled by the existing `cullBackFace` path.
+This is deliberately narrower than claiming all scene culling is complete. Remaining culling work includes:
 
-Allowing culled/back faces into a threshold average can theoretically change priority-10/11 splice positions even though those triangles are later rejected by rasterization. For that reason, this document does **not** claim software-painter face-priority parity is fully closed yet.
+- chunk/map/entity visibility parity beyond the already mirrored map-level visibility order;
+- broader model/near-plane rejection behavior around the camera clipping domain;
+- dynamic entity culling once players, NPCs, projectiles, and spot effects move to WebGPU;
+- special world-entity overlap/ghost paths;
+- asynchronous picking/highlight visibility.
 
-Visibility-aware priority inputs belong with the remaining culling-parity work because the visibility predicate must use the same final projection/front-face convention as the renderer. That checkpoint must decide and test the behavior for both culling-enabled and culling-disabled modes rather than introducing a second approximate predicate here.
-
-Until then:
-
-- the exact 0..11 bucket/threshold algorithm is active for submitted model spans;
-- instance-specific depth/contouring is active;
-- the packed 3-bit approximation is removed from the A/B loc shader;
-- final software-visible-face parity remains pending with culling.
+Those belong to the broader culling/picking migration stage, not to the face-priority bucket algorithm.
 
 ## Validation coverage
 
-The foundation suite now contains dedicated coverage for:
+The foundation suite contains dedicated coverage for:
 
 - `face-priority-sort.test.ts`: renderer-neutral CPU painter oracle;
 - `exact-face-priority-sidecar.test.ts`: exact priority/span construction;
 - `webgpu-face-priority-resources.test.ts`: invariant GPU resources and disposal hooks;
-- `webgpu-face-priority-depth.test.ts`: packed decoding, contour-aware depth jobs, compute plumbing;
+- `webgpu-face-priority-depth.test.ts`: packed decoding, contour-aware depth jobs, visibility uniforms/buffer ownership, and compute plumbing;
 - `webgpu-face-priority-sort-compute.test.ts`: analytic GPU-rank formulation versus the CPU oracle, including deterministic randomized fixtures;
+- `webgpu-face-priority-visibility.test.ts`: projected front/back winding, culling-disabled behavior, visible-only threshold ordering, deterministic hidden-face tail layout, and activation-state plumbing;
 - `webgpu-face-priority-activation.test.ts`: instanced-draw expansion, per-placement dense output ranges, roof filtering, and world-entity/view transform composition;
 - `webgpu-animated-loc-draws.test.ts`: animated span refresh and hidden-frame behavior;
 - `webgpu-loc-depth-shader.test.ts`: removal of the compressed face-priority Z nudge while preserving the independent placement-ordering shader rules.
+
+`client/package.json` includes the new visibility fixture in `test:webgpu-foundation`.
 
 No test or typecheck result should be claimed as executed remotely unless GitHub reports a check for the current branch head.
 
@@ -189,29 +210,31 @@ The prepared exact-sort draw is therefore still one unit in the delayed-wall sch
 
 The next ordering/culling stage should:
 
-1. define the authoritative camera-visible/front-face predicate for priority-bucket membership;
-2. make that predicate match the final WebGPU projection/culling convention;
-3. cover culling-enabled and culling-disabled behavior explicitly;
-4. compare visibility-filtered GPU order against a software-painter fixture;
-5. validate representative opaque/alpha, LOD, animated, door, ground-item, contour, and world-entity scenes in the A/B renderer;
-6. then continue chunk/entity culling parity and asynchronous picking.
+1. audit chunk/map/entity culling against the WebGL2 authoritative path;
+2. define remaining model/near-plane rejection behavior explicitly;
+3. validate representative opaque/alpha, LOD, animated, door, ground-item, contour, and world-entity scenes in the A/B renderer;
+4. add asynchronous picking without stalling the frame;
+5. then continue dynamic players/NPCs/projectiles/spot effects and special world-entity overlap behavior.
 
-Broader migration work still includes dynamic players/NPCs/projectiles/spot effects, world-entity special overlap behavior, full 2D/UI, device-loss/performance hardening, full renderer activation, and final WebGL2 fallback validation.
+Broader migration work still includes full 2D/UI, device-loss/performance hardening, full renderer activation, and final WebGL2 fallback validation.
 
 ## Completion criteria
 
-Face-priority ordering is fully complete only when:
+The dedicated static face-priority path now satisfies:
 
 - exact `0..11` priorities survive scene construction without compression;
+- sentinel `faceColors3 == -2` triangles do not enter the sidecar;
 - model spans remain exact through animation updates;
-- repeated placed instances can receive independent contour-dependent depths and sorted output;
-- CPU and GPU bucket/threshold behavior agree;
-- priority `10/11` strict-threshold behavior agrees;
+- repeated placed instances can receive independent contour-dependent depths and visibility results;
+- CPU and GPU bucket/threshold behavior agree by construction/reference fixtures;
+- priority `10/11` strict-threshold behavior is preserved;
 - the A/B renderer consumes dense sorted index ranges for locs, doors, and ground items;
-- opaque/alpha and full-detail/LOD passes use the correct pass-local sorted outputs;
+- opaque/alpha and full-detail/LOD passes use independent pass-local sorted outputs;
 - delayed-wall ordering still operates on whole placed models;
-- camera-visible/front-face membership matches the software painter when culling parity is enabled;
+- culling-enabled priority membership removes projected back faces before threshold calculation;
+- culling-disabled mode keeps every submitted face eligible;
+- hidden faces occupy deterministic degenerate tail slots without changing draw counts;
 - the packed 3-bit priority nudge is no longer responsible for painter correctness;
 - WebGL2 fallback data and behavior remain unchanged.
 
-The data path, instance-aware depth pass, exact 0..11 rank algorithm, dense per-submission output, A/B static activation, instanced placement expansion, dynamic scratch growth, cleanup, and packed-bias removal are implemented. Visibility-aware bucket membership remains for the culling-parity checkpoint.
+The data path, instance-aware depth pass, projected visibility pass, exact 0..11 rank algorithm, dense per-submission output, A/B static activation, instanced placement expansion, dynamic scratch growth, cleanup, and packed-bias removal are implemented. Broader scene culling and picking remain in the next migration stage.
