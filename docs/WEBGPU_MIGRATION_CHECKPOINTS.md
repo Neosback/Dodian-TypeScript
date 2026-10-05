@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement-metadata plumbing, cardinal/decoration camera-relative depth rules, and type-1/type-3 diagonal boundary delayed-wall ordering implemented; full face priority remains pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement metadata, wall/decor ordering, delayed-wall ordering, exact 0..11 face priority, and back-face-aware priority membership are implemented in the A/B path. Broader scene culling remains in checkpoint 4.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -128,7 +128,9 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Replace the provisional terrain/loc plane `0.001` offset in the transformed WebGPU shader with the documented `2/128` per-plane separation so terrain and placed geometry use the same plane convention.
 - Apply cardinal wall push-back only while the camera is not outside that wall edge, flip cardinal wall decorations between front/back pulls based on camera side, and apply ground/roof pulls from the same placement classification used by the CPU reference.
 - Preserve the old model-priority nudge only for legacy/non-placement records; placement-aware locs use the explicit wall/decor/roof/ground rules instead.
-- Keep the temporary packed 3-bit per-face depth bias for now. Full OSRS face-priority 0..11 sorting and priority 10/11 threshold behavior remain the next dedicated ordering checkpoint.
+- Preserve exact per-face priorities `0..11` in a sidecar, compute instance-aware camera-relative face depth, and reproduce the software bucket/threshold rules including strict `>` thresholds and the priority-10-before-11 special stream.
+- Use the current projection, placement/contour geometry, map render position, world-entity/view transform, and `cullBackFace` setting to write per-work-item projected visibility. Back faces are removed before bucket counts and threshold averages; culling-disabled mode keeps all submitted faces eligible.
+- Keep draw counts stable by placing rejected faces in a deterministic degenerate-triangle tail of each sorted output range. The temporary packed 3-bit face-priority depth bias is no longer used for painter correctness.
 - Reproduce the software painter's type-1/type-3 diagonal boundary tables for orientation masks `16/32/64/128`, including FRONT, DELAYED, and BACK camera sectors plus the original per-sector block-span masks.
 - Resolve trailer anchors from worker-local scene tiles into world-tile coordinates using the map render position and retained `borderSize`, then compare them directly against the renderer-neutral camera tile.
 - Reconstruct the original per-covered-tile `1/2/4/8` loc continuation mask from canonical anchor plus packed `sizeX/sizeY`, so delayed-wall release uses the same `(locSpan & wallCullDirection) == blockLocSpan` test without duplicating scene topology.
@@ -169,13 +171,13 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Ground-item texture loads already flow through `updateTextureArray`, which mirrors the streamed pixel payload into the WebGPU comparison before the WebGL array upload path.
 - Preserve WebGL's missing-model retry behavior because the WebGPU snapshot is produced by the same CPU rebuild attempt; an empty/failed build clears the comparison geometry until the authoritative builder produces a later revision.
 - Loc, door, and ground-item resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Remaining static-scene ordering work is full face-priority ordering. Special world-entity overlap/ghost rendering remains later ordering/parity work.
+- Dedicated static face-priority ordering is implemented. Special world-entity overlap/ghost rendering and broader chunk/entity/model culling remain later ordering/parity work.
 
 ### 4. Ordering, depth, culling, and picking
 
 Status: in progress.
 
-Cardinal wall/decor camera-relative depth rules, diagonal decoration selection, and type-1/type-3 diagonal boundary delayed-wall ordering are implemented in the WebGPU comparison. Remaining work includes full 0..11 face priorities, chunk/entity culling parity, and asynchronous picking.
+Cardinal wall/decor camera-relative depth rules, diagonal decoration selection, type-1/type-3 delayed-wall ordering, exact 0..11 per-face priority sorting, instance-aware contour depth, and projected back-face filtering before priority thresholds are implemented in the WebGPU comparison. Remaining work is broader chunk/entity/model/near-plane culling parity and asynchronous picking.
 
 ### 5. Dynamic scene
 
