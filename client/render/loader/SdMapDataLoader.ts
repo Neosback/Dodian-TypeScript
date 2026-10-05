@@ -45,6 +45,7 @@ import type {
     NpcRenderBundle,
     NpcRenderTemplate,
 } from "../npc/NpcRenderTemplate";
+import { ExactFacePrioritySceneBuffer } from "../priority/ExactFacePrioritySceneBuffer";
 import { isKnownWaterTextureId } from "../water/WaterTextureIds";
 import { NpcGeometryData } from "./NpcGeometryData";
 import { type LocGeometryData, type MinimapIcon, SdMapData } from "./SdMapData";
@@ -776,7 +777,7 @@ function addSceneModels(
     }
 }
 
-function buildLocGeometryData(sceneBuf: SceneBuffer): LocGeometryData {
+function buildLocGeometryData(sceneBuf: ExactFacePrioritySceneBuffer): LocGeometryData {
     const drawRanges = (commands: DrawCommand[]): DrawRange[] =>
         commands.map((cmd) => newDrawRange(cmd.offset, cmd.elements, cmd.instances.length));
     const drawRangePlanes = (commands: DrawCommand[]): Uint8Array =>
@@ -787,6 +788,8 @@ function buildLocGeometryData(sceneBuf: SceneBuffer): LocGeometryData {
     return {
         vertices: sceneBuf.vertexBuf.byteArray(),
         indices: new Int32Array(sceneBuf.indices),
+        facePriorities: sceneBuf.toExactFacePriorityArray(),
+        facePriorityModelSpans: sceneBuf.toExactFacePriorityModelSpans(),
 
         modelTextureData: createModelInfoTextureData(sceneBuf.drawCommands),
         modelTextureDataAlpha: createModelInfoTextureData(sceneBuf.drawCommandsAlpha),
@@ -1504,8 +1507,16 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         // Terrain does not change for LOC_ADD_CHANGE packets. Keep it in the
         // primary mesh and put mutable non-door locs in their own mesh.
         const sceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 100000);
-        const locSceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 100000);
-        const doorSceneBuf = new SceneBuffer(textureLoader, textureIdIndexMap, 20000);
+        const locSceneBuf = new ExactFacePrioritySceneBuffer(
+            textureLoader,
+            textureIdIndexMap,
+            100000,
+        );
+        const doorSceneBuf = new ExactFacePrioritySceneBuffer(
+            textureLoader,
+            textureIdIndexMap,
+            20000,
+        );
         const coreSize = isInstance ? INSTANCE_SIZE : Scene.MAP_SQUARE_SIZE;
         if (!shouldLoadPartial) {
             sceneBuf.addTerrain(scene, usedBorderSize, maxLevel, coreSize, usedBorderSize);
@@ -1951,6 +1962,8 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
         const indices = new Int32Array(sceneBuf.indices);
         const doorVertices = doorSceneBuf.vertexBuf.byteArray();
         const doorIndices = new Int32Array(doorSceneBuf.indices);
+        const doorFacePriorities = doorSceneBuf.toExactFacePriorityArray();
+        const doorFacePriorityModelSpans = doorSceneBuf.toExactFacePriorityModelSpans();
         const npcVertices = npcSceneBuf.vertexBuf.byteArray();
         const npcIndices = new Int32Array(npcSceneBuf.indices);
 
@@ -2069,8 +2082,12 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
             indices.buffer,
             locGeometry.vertices.buffer,
             locGeometry.indices.buffer,
+            locGeometry.facePriorities.buffer,
+            locGeometry.facePriorityModelSpans.buffer,
             doorVertices.buffer,
             doorIndices.buffer,
+            doorFacePriorities.buffer,
+            doorFacePriorityModelSpans.buffer,
             npcVertices.buffer,
             npcIndices.buffer,
             heightMapTextureData.buffer,
@@ -2179,6 +2196,8 @@ export class SdMapDataLoader implements RenderDataLoader<SdMapLoaderInput, SdMap
                 loc: locGeometry,
                 doorVertices,
                 doorIndices,
+                doorFacePriorities,
+                doorFacePriorityModelSpans,
                 npcVertices,
                 npcIndices,
 
