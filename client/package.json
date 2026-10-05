@@ -96,6 +96,7 @@
           "render/**/*.{ts,tsx}",
           "widgets/gl/**/*.{ts,tsx}",
           "ui/item/**/*.{ts,tsx}",
+          "ui/model/**/*.{ts,tsx}",
           "network/serverConnection/**/*.{ts,tsx}"
         ],
         "rules": {
