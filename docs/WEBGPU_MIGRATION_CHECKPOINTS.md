@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement-metadata plumbing, and cardinal/decoration camera-relative depth rules implemented; diagonal boundary ordering and full face priority remain pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement-metadata plumbing, cardinal/decoration camera-relative depth rules, and type-1/type-3 diagonal boundary delayed-wall ordering implemented; full face priority remains pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -120,7 +120,7 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Upgrade that optional trailer to version 3 with separate uint16 identity, anchor, and packed `sizeX/sizeY` footprint words per instance. Version-1 identity-only trailers, version-2 identity+anchor trailers, and packets with no trailer remain readable while the legacy WebGL2 model-info records remain unchanged.
 - Populate anchors and footprints from the authoritative scene records: real `Loc` spans use inclusive `startX/startY/endX/endY`, while wall/decor/floor `SceneLoc` records serialize as `1x1`. Static and animated `LocEntity` paths use the same contract.
 - Split merged static-model draw runs when placement metadata or footprint changes, preserving scene order while preventing incompatible loc spans from collapsing behind one synthetic model-info record.
-- Parse the optional trailer in the WebGPU loc plan with backward compatibility for older packets, and fold its encoded identity into the unused upper 16 bits of `info.w` while retaining the legacy interaction ID in the lower 16 bits. Placement anchors and footprints stay renderer-neutral CPU metadata for the upcoming diagonal-boundary ordering path.
+- Parse the optional trailer in the WebGPU loc plan with backward compatibility for older packets, and fold its encoded identity into the unused upper 16 bits of `info.w` while retaining the legacy interaction ID in the lower 16 bits. Placement anchors and footprints remain renderer-neutral CPU metadata and are consumed by the delayed-wall ordering scheduler.
 - Define renderer-neutral CPU reference rules for the documented `3/128` ground pull, `2/128` wall-decoration pull, `10/128` wall-behind push, `8/128` roof pull, and `2/128` per-plane bias.
 - Match the original cardinal boundary orientation table `{1,2,4,8}`, including the second part of type-2 corner walls, without incorrectly mapping type-1/type-3 diagonal boundary masks into cardinal edges.
 - Reproduce the software client's `orientation == 256` camera comparison for decoration types 6, 7, and 8 so only the painter-selected diagonal decoration part remains visible.
@@ -129,7 +129,11 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Apply cardinal wall push-back only while the camera is not outside that wall edge, flip cardinal wall decorations between front/back pulls based on camera side, and apply ground/roof pulls from the same placement classification used by the CPU reference.
 - Preserve the old model-priority nudge only for legacy/non-placement records; placement-aware locs use the explicit wall/decor/roof/ground rules instead.
 - Keep the temporary packed 3-bit per-face depth bias for now. Full OSRS face-priority 0..11 sorting and priority 10/11 threshold behavior remain the next dedicated ordering checkpoint.
-- Leave type-1/type-3 diagonal boundary pieces on zero special pull for now rather than inventing a cardinal approximation; their original 16/32/64/128 delayed-wall ordering remains explicit follow-up work. The CPU plan now has the canonical anchor and footprint needed to reconstruct the original per-tile `1/2/4/8` loc-span masks without duplicating scene topology.
+- Reproduce the software painter's type-1/type-3 diagonal boundary tables for orientation masks `16/32/64/128`, including FRONT, DELAYED, and BACK camera sectors plus the original per-sector block-span masks.
+- Resolve trailer anchors from worker-local scene tiles into world-tile coordinates using the map render position and retained `borderSize`, then compare them directly against the renderer-neutral camera tile.
+- Reconstruct the original per-covered-tile `1/2/4/8` loc continuation mask from canonical anchor plus packed `sizeX/sizeY`, so delayed-wall release uses the same `(locSpan & wallCullDirection) == blockLocSpan` test without duplicating scene topology.
+- Build a stable CPU dependency order for static submissions: FRONT diagonal walls precede overlapping scene locs, BACK walls follow them, and DELAYED walls wait only for locs matching the original blocking span condition. Unrelated geometry keeps its established baseline order.
+- Apply that ordering in both opaque and transparent static passes across ordinary loc, ground-item, and door resource streams; only real loc-span placements participate as blockers, so unrelated ground items/walls/decorations do not acquire artificial dependencies.
 - Upload the existing four-plane signed height map as `r16sint`, with WebGPU row padding, and port the same two-diagonal contour interpolation used by GLSL.
 - Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
 - Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, brightness, and height contouring.
@@ -142,7 +146,7 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Cache cull/no-cull variants for opaque and alpha loc pipelines rather than rebuilding pipeline state in the frame loop.
 - Keep door vertex/index/model-info resources independent from ordinary loc resources so a `doorOnly` payload can replace doors without touching terrain or locs.
 - Map the worker's eight door model-info/range variants into the same static-loc GPU format; the current comparison uses the ordinary opaque/alpha and LOD variants while preserving the interaction variants for later picking/highlight work.
-- Render doors after ordinary locs for each map in both opaque and transparent passes, preserving their relative WebGL scene order.
+- Preserve terrain-first map-local ordering and the existing loc -> ground-item -> door baseline where no delayed-wall dependency exists.
 - Mirror valid `locOnly` and `doorOnly` updates only after WebGL commits the corresponding `MapManager.addMap`, rather than when a worker payload merely enters the queue.
 - Preserve FIFO ordering for multiple partial updates targeting the same map and discard queued partials when a full payload supersedes them.
 - Restore all queue/map observers during comparison disposal, device-loss fallback, or validation failure so the opt-in A/B path cannot leave hooks installed.
@@ -161,18 +165,17 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Publish versioned ground-item geometry snapshots against the actual `WebGLMapSquare` object and lazily mirror a changed or cleared snapshot when that same map becomes visible in the A/B comparison.
 - Map ground-item vertices, uint32 indices, model-info tables, opaque/alpha ranges, LOD ranges, and roof-plane metadata into the existing static-loc GPU resource contract; interaction variants remain available for the later picking/highlight stage.
 - Reuse each map square's retained signed `heightMapData` and `heightMapSize` so ground-item `CENTER_TILE` contouring samples the same bridge-aware height data as the WebGL path.
-- Preserve WebGL's map-local order in both passes: terrain -> ordinary locs -> ground items -> doors. Transparent maps still traverse in reverse visible-map order.
 - Ground items use the same roof-plane filter, full-detail/LOD selection, material/texture path, alpha cutoff, depth behavior, and per-map world-entity transform as other static model geometry.
 - Ground-item texture loads already flow through `updateTextureArray`, which mirrors the streamed pixel payload into the WebGPU comparison before the WebGL array upload path.
 - Preserve WebGL's missing-model retry behavior because the WebGPU snapshot is produced by the same CPU rebuild attempt; an empty/failed build clears the comparison geometry until the authoritative builder produces a later revision.
 - Loc, door, and ground-item resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Remaining static-scene ordering work is the type-1/type-3 diagonal boundary delayed-wall path plus full face-priority ordering. Special world-entity overlap/ghost rendering remains later ordering/parity work.
+- Remaining static-scene ordering work is full face-priority ordering. Special world-entity overlap/ghost rendering remains later ordering/parity work.
 
 ### 4. Ordering, depth, culling, and picking
 
 Status: in progress.
 
-Cardinal wall/decor camera-relative depth rules and diagonal decoration selection are now implemented in the WebGPU comparison. Remaining work includes type-1/type-3 diagonal boundary delayed-wall ordering, full 0..11 face priorities, chunk/entity culling parity, and asynchronous picking.
+Cardinal wall/decor camera-relative depth rules, diagonal decoration selection, and type-1/type-3 diagonal boundary delayed-wall ordering are implemented in the WebGPU comparison. Remaining work includes full 0..11 face priorities, chunk/entity culling parity, and asynchronous picking.
 
 ### 5. Dynamic scene
 
