@@ -15,6 +15,15 @@ import { LocModelType } from "../../rs/config/loctype/LocModelType";
  */
 export const LOC_PLACEMENT_NONE = 0xffff;
 
+/**
+ * Placement metadata is appended after the legacy model-info payload. WebGL2
+ * never indexes this tail, while WebGPU can opt in without changing the worker
+ * packet shape or the WebGL texture ABI.
+ */
+export const LOC_PLACEMENT_TRAILER_MAGIC = 0x4c50; // "LP"
+export const LOC_PLACEMENT_TRAILER_VERSION = 1;
+export const LOC_PLACEMENT_TRAILER_HEADER_WORDS = 4;
+
 const TYPE_MASK = 0x3f;
 const ROTATION_MASK = 0x3;
 const ROTATION_SHIFT = 6;
@@ -96,4 +105,9 @@ export function hasLocPlacementClass(
     flag: LocPlacementClassFlag,
 ): boolean {
     return (getLocPlacementClassFlags(metadata) & flag) !== 0;
+}
+
+/** Word offset immediately after draw headers and four-word instance records. */
+export function getLocPlacementTrailerWordOffset(drawCount: number, instanceCount: number): number {
+    return (Math.max(0, drawCount | 0) + Math.max(0, instanceCount | 0)) * 4;
 }
