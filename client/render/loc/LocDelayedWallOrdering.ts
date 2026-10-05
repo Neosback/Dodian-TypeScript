@@ -1,5 +1,8 @@
 import { LocModelType } from "../../rs/config/loctype/LocModelType";
-import { unpackLocPlacementMetadata } from "./LocPlacementMetadata";
+import {
+    decodeLocPlacementFootprint,
+    unpackLocPlacementMetadata,
+} from "./LocPlacementMetadata";
 
 /**
  * Original software-scene wall masks, indexed by the camera's 3x3 relation to
@@ -101,9 +104,7 @@ function delayedSpanRule(orientationMask: number, directionIndex: number): [numb
 
 /**
  * Exact camera-sector classification used by the software painter for diagonal
- * type-1/type-3 boundaries. This function is deliberately CPU/reference-only:
- * the next WebGPU step consumes its phase and delayed-span rule without changing
- * these tables.
+ * type-1/type-3 boundaries.
  */
 export function getLocDelayedWallRule(
     metadata: number,
@@ -168,12 +169,10 @@ export function getLocDelayedWallRule(
         };
     }
 
-    // The original tables classify every diagonal orientation in every camera
-    // sector. Keep an explicit NONE fallback so malformed metadata stays safe.
     return {
         phase: LocDiagonalBoundaryPhase.NONE,
         directionIndex,
-        orientationMask,
+        orientationMask: 0,
         wallCullDirection: 0,
         blockLocSpan: 0,
         oppositeLocSpan: 0,
@@ -192,10 +191,6 @@ export type LocTileFootprint = {
  * software scene. The bits describe which other covered tiles continue away
  * from the queried tile: west=1, north=2, east=4, south=8 in the original
  * painter's tile-edge convention.
- *
- * Delayed-wall release needs this mask at the wall's anchor tile. Therefore an
- * exact footprint (or equivalently anchor + sizeX/sizeY) is the minimum extra
- * data required beyond the placement anchor already carried by trailer v2.
  */
 export function getLocFootprintSpanMaskAtTile(
     footprint: LocTileFootprint,
@@ -217,4 +212,154 @@ export function getLocFootprintSpanMaskAtTile(
     if (tileX < footprint.endX) mask |= 4;
     if (tileY > footprint.startY) mask |= 8;
     return mask;
+}
+
+/**
+ * Minimal CPU description of one submitted static-model draw. Anchors are in
+ * world-tile coordinates so this ordering layer is independent of map borders
+ * and map-square/world-entity placement details.
+ */
+export type LocDelayedWallDrawItem = {
+    plane: number;
+    placementMetadata: number;
+    anchorX: number;
+    anchorY: number;
+    encodedFootprint: number;
+};
+
+function isLocSpanPlacement(metadata: number): boolean {
+    const placement = unpackLocPlacementMetadata(metadata);
+    return (
+        !!placement &&
+        placement.type >= LocModelType.WALL_DIAGONAL &&
+        placement.type <= LocModelType.ROOF_SLOPED_OVERHANG_HARD_OUTER_CORNER
+    );
+}
+
+function footprintForOrdering(item: LocDelayedWallDrawItem): LocTileFootprint | undefined {
+    if (item.anchorX < 0 || item.anchorY < 0 || !isLocSpanPlacement(item.placementMetadata)) {
+        return undefined;
+    }
+    const size = decodeLocPlacementFootprint(item.encodedFootprint) ?? { sizeX: 1, sizeY: 1 };
+    return {
+        startX: item.anchorX,
+        startY: item.anchorY,
+        endX: item.anchorX + size.sizeX - 1,
+        endY: item.anchorY + size.sizeY - 1,
+    };
+}
+
+function footprintContainsTile(footprint: LocTileFootprint, tileX: number, tileY: number): boolean {
+    return (
+        tileX >= footprint.startX &&
+        tileX <= footprint.endX &&
+        tileY >= footprint.startY &&
+        tileY <= footprint.endY
+    );
+}
+
+/**
+ * Build a stable draw order which reproduces the software painter's local
+ * diagonal-boundary constraints while preserving the caller's baseline order
+ * wherever no painter dependency exists.
+ *
+ * FRONT walls precede every overlapping scene loc. BACK walls follow them all.
+ * DELAYED walls follow only locs whose span mask matches BlockLocSpans and
+ * precede overlapping non-blockers, matching the original release condition.
+ */
+export function createLocDelayedWallDrawOrder(
+    items: readonly LocDelayedWallDrawItem[],
+    cameraTileX: number,
+    cameraTileY: number,
+): number[] {
+    const count = items.length;
+    if (count <= 1) {
+        return count === 0 ? [] : [0];
+    }
+
+    const footprints: Array<LocTileFootprint | undefined> = new Array(count);
+    for (let i = 0; i < count; i++) {
+        footprints[i] = footprintForOrdering(items[i]);
+    }
+
+    const outgoing: Array<Set<number>> = Array.from({ length: count }, () => new Set<number>());
+    const indegree = new Int32Array(count);
+    const addConstraint = (before: number, after: number): void => {
+        if (before === after || outgoing[before].has(after)) {
+            return;
+        }
+        outgoing[before].add(after);
+        indegree[after]++;
+    };
+
+    for (let wallIndex = 0; wallIndex < count; wallIndex++) {
+        const wall = items[wallIndex];
+        if (wall.anchorX < 0 || wall.anchorY < 0) {
+            continue;
+        }
+        const rule = getLocDelayedWallRule(
+            wall.placementMetadata,
+            wall.anchorX,
+            wall.anchorY,
+            cameraTileX,
+            cameraTileY,
+        );
+        if (rule.phase === LocDiagonalBoundaryPhase.NONE) {
+            continue;
+        }
+
+        for (let locIndex = 0; locIndex < count; locIndex++) {
+            if (locIndex === wallIndex || items[locIndex].plane !== wall.plane) {
+                continue;
+            }
+            const footprint = footprints[locIndex];
+            if (!footprint || !footprintContainsTile(footprint, wall.anchorX, wall.anchorY)) {
+                continue;
+            }
+
+            if (rule.phase === LocDiagonalBoundaryPhase.FRONT) {
+                addConstraint(wallIndex, locIndex);
+                continue;
+            }
+            if (rule.phase === LocDiagonalBoundaryPhase.BACK) {
+                addConstraint(locIndex, wallIndex);
+                continue;
+            }
+
+            const span = getLocFootprintSpanMaskAtTile(footprint, wall.anchorX, wall.anchorY);
+            const blocks = (span & rule.wallCullDirection) === rule.blockLocSpan;
+            if (blocks) {
+                addConstraint(locIndex, wallIndex);
+            } else {
+                addConstraint(wallIndex, locIndex);
+            }
+        }
+    }
+
+    // Stable Kahn sort: always emit the earliest baseline draw currently free
+    // of painter dependencies. This minimizes movement of unrelated geometry.
+    const available: number[] = [];
+    for (let i = 0; i < count; i++) {
+        if (indegree[i] === 0) available.push(i);
+    }
+    const ordered: number[] = [];
+    while (available.length > 0) {
+        let bestOffset = 0;
+        for (let i = 1; i < available.length; i++) {
+            if (available[i] < available[bestOffset]) bestOffset = i;
+        }
+        const next = available.splice(bestOffset, 1)[0];
+        ordered.push(next);
+        for (const after of outgoing[next]) {
+            indegree[after]--;
+            if (indegree[after] === 0) available.push(after);
+        }
+    }
+
+    // Malformed/cyclic metadata must never drop geometry. The real placement
+    // graph is acyclic, but retain the original order as a defensive fallback.
+    if (ordered.length !== count) {
+        return Array.from({ length: count }, (_, index) => index);
+    }
+    return ordered;
 }
