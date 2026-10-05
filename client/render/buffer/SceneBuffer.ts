@@ -12,6 +12,7 @@ import { InteractType } from "../InteractType";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
 import {
+    LOC_PLACEMENT_FOOTPRINT_NONE,
     LOC_PLACEMENT_NONE,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
     LOC_PLACEMENT_TRAILER_MAGIC,
@@ -43,6 +44,8 @@ export type ModelInfo = {
     interactId: number;
     /** Renderer-neutral loc type/rotation/part identity. Omitted for non-loc geometry. */
     placementMetadata?: number;
+    /** Packed renderer-neutral loc sizeX/sizeY footprint. Omitted for non-loc geometry. */
+    placementFootprint?: number;
 };
 
 export type DrawCommand = {
@@ -391,6 +394,7 @@ export class SceneBuffer {
         let runOffset = this.indexByteOffset();
         let runElements = 0;
         let runPlacementMetadata = LOC_PLACEMENT_NONE;
+        let runPlacementFootprint = LOC_PLACEMENT_FOOTPRINT_NONE;
 
         const flushMergedRun = (): void => {
             if (runElements <= 0) {
@@ -412,6 +416,7 @@ export class SceneBuffer {
                         interactType: InteractType.NONE,
                         interactId: 0xffff,
                         placementMetadata: runPlacementMetadata,
+                        placementFootprint: runPlacementFootprint,
                     },
                 ],
             };
@@ -433,12 +438,19 @@ export class SceneBuffer {
 
         for (const sceneModel of group.models) {
             const placementMetadata = sceneModel.placementMetadata ?? LOC_PLACEMENT_NONE;
-            if (runElements > 0 && placementMetadata !== runPlacementMetadata) {
+            const placementFootprint =
+                sceneModel.placementFootprint ?? LOC_PLACEMENT_FOOTPRINT_NONE;
+            if (
+                runElements > 0 &&
+                (placementMetadata !== runPlacementMetadata ||
+                    placementFootprint !== runPlacementFootprint)
+            ) {
                 flushMergedRun();
             }
             if (runElements === 0) {
                 runOffset = this.indexByteOffset();
                 runPlacementMetadata = placementMetadata;
+                runPlacementFootprint = placementFootprint;
             }
 
             const model = sceneModel.model;
@@ -474,6 +486,7 @@ export class SceneBuffer {
                         interactType: sceneModel.interactType,
                         interactId: sceneModel.interactId,
                         placementMetadata,
+                        placementFootprint,
                     },
                 ],
             };
@@ -822,6 +835,8 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
             payloadOffset + index * LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
         textureData[metadataOffset] = getLocPlacementIdentity(metadata);
         textureData[metadataOffset + 1] = getEncodedLocPlacementAnchor(metadata);
+        textureData[metadataOffset + 2] =
+            instances[index].placementFootprint ?? LOC_PLACEMENT_FOOTPRINT_NONE;
     }
 
     return textureData;
