@@ -24,7 +24,6 @@ import {
 } from "../../backend/WebGPUPlatform";
 import {
     type WebGPUFacePriorityDrawSpanRange,
-    type WebGPUFacePriorityIndexSource,
     WebGPUFacePrioritySortResources,
 } from "./WebGPUFacePrioritySortResources";
 import {
@@ -119,20 +118,6 @@ function createUploadedBuffer(
         device.queue.writeBuffer(buffer, 0, data);
     }
     return buffer;
-}
-
-export function resolveWebGPUStaticLocIndexBuffer(
-    plainIndexBuffer: WebGPUBufferLike,
-    sortResources: WebGPUFacePrioritySortResources | undefined,
-    source: WebGPUFacePriorityIndexSource,
-): WebGPUBufferLike {
-    if (source === "plain") {
-        return plainIndexBuffer;
-    }
-    if (!sortResources) {
-        throw new Error("Priority index source requested without face-priority sort resources");
-    }
-    return sortResources.sortedIndexBuffer;
 }
 
 export function refreshWebGPUStaticLocFacePrioritySpan(
@@ -465,7 +450,7 @@ export class WebGPUStaticLocResources {
     readonly facePriorities: Uint8Array;
     /** `[firstIndex, indexCount]` pairs preserving model-local sort boundaries. */
     readonly facePriorityModelSpans: Uint32Array;
-    /** GPU-side source/depth/sorted-index resources, still inactive until compute sorting is enabled. */
+    /** GPU-side invariant data plus pass-local exact depth/sort runtime ownership. */
     readonly facePrioritySortResources?: WebGPUFacePrioritySortResources;
     readonly opaque?: WebGPUStaticLocPassResources;
     readonly alpha?: WebGPUStaticLocPassResources;
@@ -474,7 +459,6 @@ export class WebGPUStaticLocResources {
 
     private readonly registryDevice?: WebGPUDeviceLike;
     private readonly registryMapId?: number;
-    private facePriorityIndexSource: WebGPUFacePriorityIndexSource = "plain";
 
     constructor(
         device: WebGPUDeviceLike,
@@ -514,6 +498,7 @@ export class WebGPUStaticLocResources {
             this.facePrioritySortResources = new WebGPUFacePrioritySortResources(
                 device,
                 `loc-${mapX}-${mapY}`,
+                geometry.vertices,
                 geometry.indices,
                 geometry.facePriorities,
                 geometry.facePriorityModelSpans,
@@ -604,25 +589,6 @@ export class WebGPUStaticLocResources {
             throw new Error("Opaque static-loc resources are unavailable");
         }
         return this.opaque.bindGroup;
-    }
-
-    get activeIndexBuffer(): WebGPUBufferLike {
-        return resolveWebGPUStaticLocIndexBuffer(
-            this.indexBuffer,
-            this.facePrioritySortResources,
-            this.facePriorityIndexSource,
-        );
-    }
-
-    getFacePriorityIndexSource(): WebGPUFacePriorityIndexSource {
-        return this.facePriorityIndexSource;
-    }
-
-    setFacePriorityIndexSource(source: WebGPUFacePriorityIndexSource): void {
-        if (source === "priority" && !this.facePrioritySortResources) {
-            throw new Error("Cannot enable priority index source without face-priority sort resources");
-        }
-        this.facePriorityIndexSource = source;
     }
 
     getPass(transparent: boolean, lod: boolean): WebGPUStaticLocPassResources | undefined {
