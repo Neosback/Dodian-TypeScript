@@ -15,6 +15,7 @@ function makePass(draw: WebGPUStaticLocDrawPlanEntry): WebGPUStaticLocPassResour
         drawsBySourceIndex: [draw],
         placementMetadata: new Uint32Array(0),
         orderingAnchorTiles: new Int16Array(0),
+        orderingFootprints: new Uint16Array(0),
     };
 }
 
