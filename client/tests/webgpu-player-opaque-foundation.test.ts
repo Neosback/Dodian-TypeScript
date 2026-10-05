@@ -130,7 +130,11 @@ for (let location = 1; location <= 7; location++) {
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /fn getPlayerHeightInterp/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /worldTransform \* \(scene\.viewMatrix \* vec4<f32>\(worldPos, 1\.0\)\)/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /viewPos\.z \+= f32\(plane\) \* 0\.01/);
+assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /const PRIORITY_LAYER_EPSILON: f32 = 0\.015/);
+assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /const TOP_PRIORITY_EXTRA_BIAS: f32 = 0\.01/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /let priority = \(input\.packed\.z >> 6u\) & 0x7u/);
+assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /priority == 7u/);
+assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /depthLayerPos\.z \+= layer \* PRIORITY_LAYER_EPSILON/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /fn fsPlayerOpaque/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /material\.frameCount > 1/);
 assert.match(WEBGPU_PLAYER_OPAQUE_SHADER, /fogFactor\(worldPos\.xz - scene\.playerPos\)/);
