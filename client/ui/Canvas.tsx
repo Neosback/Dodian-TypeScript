@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
+import { installWebGPUNpcAlphaComparison } from "../render/webgpu/npc/WebGPUNpcAlphaComparison";
 import { installWebGPUNpcOpaqueComparison } from "../render/webgpu/npc/WebGPUNpcOpaqueComparison";
 import { installWebGPUPlayerAlphaComparison } from "../render/webgpu/player/WebGPUPlayerAlphaComparison";
 import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
@@ -22,6 +23,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         }
         let active = true;
         let restoreNpcComparison: (() => void) | undefined;
+        let restoreNpcAlphaComparison: (() => void) | undefined;
         let restorePlayerComparison: (() => void) | undefined;
         let restorePlayerCaptureBoundary: (() => void) | undefined;
         let restorePlayerAlphaComparison: (() => void) | undefined;
@@ -37,6 +39,10 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             restoreNpcComparison = installWebGPUNpcOpaqueComparison(renderer);
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
             restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
+            // NPC alpha installs its transparent actor phase before the existing
+            // player-alpha wrapper. The resulting order is static transparency
+            // -> NPC alpha -> player alpha, matching the live WebGL actor order.
+            restoreNpcAlphaComparison = installWebGPUNpcAlphaComparison(renderer);
             restorePlayerAlphaComparison = installWebGPUPlayerAlphaComparison(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
@@ -49,6 +55,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             active = false;
             restorePlayerAlphaComparison?.();
             restorePlayerAlphaComparison = undefined;
+            restoreNpcAlphaComparison?.();
+            restoreNpcAlphaComparison = undefined;
             restorePlayerCaptureBoundary?.();
             restorePlayerCaptureBoundary = undefined;
             restorePlayerComparison?.();
