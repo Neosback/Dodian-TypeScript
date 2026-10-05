@@ -16,6 +16,9 @@ import {
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
     LOC_PLACEMENT_TRAILER_MAGIC,
     LOC_PLACEMENT_TRAILER_VERSION,
+    LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE,
+    getEncodedLocPlacementAnchor,
+    getLocPlacementIdentity,
     getLocPlacementTrailerWordOffset,
 } from "../loc/LocPlacementMetadata";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
@@ -774,7 +777,9 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
     const legacyWordLength = Math.max(legacyDataLength, 16) * 4;
     const trailerOffset = getLocPlacementTrailerWordOffset(drawCommands.length, instanceCount);
     const requiredWordLength =
-        trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS + instanceCount;
+        trailerOffset +
+        LOC_PLACEMENT_TRAILER_HEADER_WORDS +
+        instanceCount * LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
     const alignedRequiredWordLength = Math.ceil(requiredWordLength / 64) * 64;
     const textureData = new Uint16Array(
         Math.max(legacyWordLength, alignedRequiredWordLength, 64),
@@ -810,9 +815,13 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
     textureData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_VERSION;
     textureData[trailerOffset + 2] = instanceCount & 0xffff;
     textureData[trailerOffset + 3] = (instanceCount >>> 16) & 0xffff;
+    const payloadOffset = trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS;
     for (let index = 0; index < instanceCount; index++) {
-        textureData[trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS + index] =
-            instances[index].placementMetadata ?? LOC_PLACEMENT_NONE;
+        const metadata = instances[index].placementMetadata ?? LOC_PLACEMENT_NONE;
+        const metadataOffset =
+            payloadOffset + index * LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
+        textureData[metadataOffset] = getLocPlacementIdentity(metadata);
+        textureData[metadataOffset + 1] = getEncodedLocPlacementAnchor(metadata);
     }
 
     return textureData;
