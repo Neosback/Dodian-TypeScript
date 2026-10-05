@@ -23,20 +23,23 @@ import { LocModelType } from "../../rs/config/loctype/LocModelType";
 export const LOC_PLACEMENT_NONE = 0xffff;
 export const LOC_PLACEMENT_IDENTITY_MASK = 0xffff;
 export const LOC_PLACEMENT_ANCHOR_NONE = 0;
+export const LOC_PLACEMENT_FOOTPRINT_NONE = 0;
 
 /**
  * Placement metadata is appended after the legacy model-info payload. WebGL2
  * never indexes this tail, while WebGPU can opt in without changing the worker
  * packet shape or the WebGL texture ABI.
  *
- * Version 1 stored one identity uint16 per instance. Version 2 stores two
- * uint16 words per instance: identity followed by the optional anchor word.
+ * Version 1 stored one identity uint16 per instance.
+ * Version 2 stored identity + optional anchor.
+ * Version 3 stores identity + optional anchor + packed sizeX/sizeY footprint.
  */
 export const LOC_PLACEMENT_TRAILER_MAGIC = 0x4c50; // "LP"
 export const LOC_PLACEMENT_TRAILER_LEGACY_VERSION = 1;
-export const LOC_PLACEMENT_TRAILER_VERSION = 2;
+export const LOC_PLACEMENT_TRAILER_ANCHOR_VERSION = 2;
+export const LOC_PLACEMENT_TRAILER_VERSION = 3;
 export const LOC_PLACEMENT_TRAILER_HEADER_WORDS = 4;
-export const LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE = 2;
+export const LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE = 3;
 
 /** WebGPU uses zero in the upper half of info.w to mean no placement metadata. */
 export const LOC_PLACEMENT_GPU_NONE = 0;
@@ -47,6 +50,7 @@ const ROTATION_SHIFT = 6;
 const SECONDARY_PART_SHIFT = 8;
 const ANCHOR_SHIFT = 16;
 const ANCHOR_COMPONENT_MAX = 0xfe;
+const FOOTPRINT_COMPONENT_MAX = 0xff;
 
 export enum LocPlacementClassFlag {
     NONE = 0,
@@ -65,6 +69,11 @@ export type LocPlacementDescriptor = {
 export type LocPlacementAnchorTile = {
     x: number;
     y: number;
+};
+
+export type LocPlacementFootprint = {
+    sizeX: number;
+    sizeY: number;
 };
 
 export function getLocPlacementIdentity(metadata: number): number {
@@ -108,6 +117,38 @@ export function decodeLocPlacementAnchorTile(
 
 export function getEncodedLocPlacementAnchor(metadata: number): number {
     return (metadata >>> ANCHOR_SHIFT) & 0xffff;
+}
+
+/** Pack a positive 1..255 tile footprint into one uint16. Zero is reserved. */
+export function encodeLocPlacementFootprint(sizeX: number, sizeY: number): number {
+    const width = sizeX | 0;
+    const height = sizeY | 0;
+    if (
+        width < 1 ||
+        width > FOOTPRINT_COMPONENT_MAX ||
+        height < 1 ||
+        height > FOOTPRINT_COMPONENT_MAX
+    ) {
+        throw new RangeError(
+            `Loc placement footprint must be within 1..${FOOTPRINT_COMPONENT_MAX}: ${width}x${height}`,
+        );
+    }
+    return (width & 0xff) | ((height & 0xff) << 8);
+}
+
+export function decodeLocPlacementFootprint(
+    encodedFootprint: number,
+): LocPlacementFootprint | undefined {
+    const encoded = encodedFootprint & 0xffff;
+    if (encoded === LOC_PLACEMENT_FOOTPRINT_NONE) {
+        return undefined;
+    }
+    const sizeX = encoded & 0xff;
+    const sizeY = (encoded >>> 8) & 0xff;
+    if (sizeX === 0 || sizeY === 0) {
+        return undefined;
+    }
+    return { sizeX, sizeY };
 }
 
 export function combineLocPlacementMetadata(identity: number, encodedAnchor: number): number {
