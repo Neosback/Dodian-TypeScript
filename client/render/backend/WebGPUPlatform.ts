@@ -3,6 +3,8 @@ export type WebGPUCanvasAlphaMode = "opaque" | "premultiplied";
 export type WebGPUCompilationMessageType = "error" | "warning" | "info";
 
 export const WEBGPU_BUFFER_USAGE = {
+    MAP_READ: 0x0001,
+    COPY_SRC: 0x0004,
     COPY_DST: 0x0008,
     INDEX: 0x0010,
     VERTEX: 0x0020,
@@ -11,9 +13,14 @@ export const WEBGPU_BUFFER_USAGE = {
 } as const;
 
 export const WEBGPU_TEXTURE_USAGE = {
+    COPY_SRC: 0x01,
     COPY_DST: 0x02,
     TEXTURE_BINDING: 0x04,
     RENDER_ATTACHMENT: 0x10,
+} as const;
+
+export const WEBGPU_MAP_MODE = {
+    READ: 0x0001,
 } as const;
 
 export const WEBGPU_SHADER_STAGE = {
@@ -45,6 +52,9 @@ export interface WebGPUDeviceLostInfoLike {
 }
 
 export interface WebGPUBufferLike {
+    mapAsync?(mode: number, offset?: number, size?: number): Promise<void>;
+    getMappedRange?(offset?: number, size?: number): ArrayBuffer;
+    unmap?(): void;
     destroy?(): void;
 }
 
@@ -99,19 +109,14 @@ export interface WebGPUComputePassEncoderLike {
     end(): void;
 }
 
-export interface WebGPUCommandEncoderLike {
-    beginRenderPass(descriptor: Record<string, unknown>): WebGPURenderPassEncoderLike;
-    beginComputePass?(descriptor?: Record<string, unknown>): WebGPUComputePassEncoderLike;
-    finish(): WebGPUCommandBufferLike;
-}
-
 export interface WebGPUImageCopyTextureLike {
     texture: WebGPUTextureLike;
     mipLevel?: number;
     origin?: { x?: number; y?: number; z?: number };
 }
 
-export interface WebGPUImageDataLayoutLike {
+export interface WebGPUImageCopyBufferLike {
+    buffer: WebGPUBufferLike;
     offset?: number;
     bytesPerRow?: number;
     rowsPerImage?: number;
@@ -121,6 +126,23 @@ export interface WebGPUExtent3DLike {
     width: number;
     height: number;
     depthOrArrayLayers?: number;
+}
+
+export interface WebGPUCommandEncoderLike {
+    beginRenderPass(descriptor: Record<string, unknown>): WebGPURenderPassEncoderLike;
+    beginComputePass?(descriptor?: Record<string, unknown>): WebGPUComputePassEncoderLike;
+    copyTextureToBuffer?(
+        source: WebGPUImageCopyTextureLike,
+        destination: WebGPUImageCopyBufferLike,
+        copySize: WebGPUExtent3DLike,
+    ): void;
+    finish(): WebGPUCommandBufferLike;
+}
+
+export interface WebGPUImageDataLayoutLike {
+    offset?: number;
+    bytesPerRow?: number;
+    rowsPerImage?: number;
 }
 
 export interface WebGPUQueueLike {
