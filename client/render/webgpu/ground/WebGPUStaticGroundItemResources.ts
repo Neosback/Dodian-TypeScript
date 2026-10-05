@@ -15,6 +15,8 @@ export function createWebGPUStaticGroundItemGeometryData(
     return {
         vertices: data.vertices,
         indices: data.indices,
+        facePriorities: data.facePriorities,
+        facePriorityModelSpans: data.facePriorityModelSpans,
 
         modelTextureData: data.modelTextureData,
         modelTextureDataAlpha: data.modelTextureDataAlpha,
