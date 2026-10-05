@@ -4,6 +4,7 @@ import { Scene } from "../rs/scene/Scene";
 import { EntityType, calculateEntityTag } from "../rs/scene/entity/EntityTag";
 import { LocModelType } from "../rs/config/loctype/LocModelType";
 import { createModelInfoTextureData } from "../render/buffer/SceneBuffer";
+import { resolveLocOrderingAnchorWorldTile } from "../render/loc/LocOrderingMetadata";
 import {
     decodeLocPlacementAnchorTile,
     getLocPlacementIdentity,
@@ -86,5 +87,12 @@ assert.deepEqual(decodeLocPlacementAnchorTile(plan.placementMetadata[0]), {
     y: tileY,
 });
 assert.deepEqual(Array.from(plan.orderingAnchorTiles), [tileX, tileY]);
+
+// Scene anchors include the loader border. Renderer camera positions are world
+// tiles, so the pass resolves the local anchor through the map render position.
+assert.deepEqual(
+    resolveLocOrderingAnchorWorldTile(plan.orderingAnchorTiles, 0, 50, 60, 6),
+    { x: 50 * 64, y: 60 * 64 + 63 },
+);
 
 console.log("production loc placement anchor checks passed");
