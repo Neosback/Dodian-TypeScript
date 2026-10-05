@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
+import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
 import { installWebGPUPlayerOpaqueComparison } from "../render/webgpu/player/WebGPUPlayerOpaqueComparison";
 import { installWebGPUPlayerOpaquePassBoundaryGuard } from "../render/webgpu/player/WebGPUPlayerOpaquePassBoundary";
 
@@ -19,6 +20,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         }
         let active = true;
         let restorePlayerComparison: (() => void) | undefined;
+        let restorePlayerCaptureBoundary: (() => void) | undefined;
         host.appendChild(renderer.canvas);
         renderer.attachResizeObserver();
         requestAnimationFrame(() => renderer.forceResize());
@@ -27,6 +29,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             if (!active) return;
             installWebGPUPlayerOpaquePassBoundaryGuard();
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
+            restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
                 host.appendChild(comparisonCanvas);
@@ -36,6 +39,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
 
         return () => {
             active = false;
+            restorePlayerCaptureBoundary?.();
+            restorePlayerCaptureBoundary = undefined;
             restorePlayerComparison?.();
             restorePlayerComparison = undefined;
             renderer.stop();
