@@ -34,6 +34,10 @@ export interface MinimapIcon {
 export type LocGeometryData = {
     vertices: Uint8Array;
     indices: Int32Array;
+    /** Exact uncompressed 0..11 priority for each triangle in `indices`. */
+    facePriorities: Uint8Array;
+    /** `[firstIndex, indexCount]` pairs preserving each emitted model span. */
+    facePriorityModelSpans: Uint32Array;
 
     modelTextureData: Uint16Array;
     modelTextureDataAlpha: Uint16Array;
@@ -103,6 +107,10 @@ export type SdMapData = {
     loc: LocGeometryData;
     doorVertices: Uint8Array;
     doorIndices: Int32Array;
+    /** Exact uncompressed 0..11 priority for each door triangle. */
+    doorFacePriorities: Uint8Array;
+    /** `[firstIndex, indexCount]` pairs preserving each emitted door-model span. */
+    doorFacePriorityModelSpans: Uint32Array;
     npcVertices: Uint8Array;
     npcIndices: Int32Array;
 
