@@ -14,7 +14,7 @@
     "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
     "bzip2": "^0.1.1",
     "denque": "^2.1.0",
-    "fast-memoize": "^2.5.2",
+    "fast-memoize": "^5.0.1",
     "file-saver": "^2.0.5",
     "gl-matrix": "^3.4.4",
     "java-random": "^0.4.0",
@@ -59,7 +59,7 @@
     "export-height-map": "tsx scripts/cache/export-height-map.ts",
     "export-items": "tsx scripts/cache/export-items.ts",
     "deploy": "node scripts/deploy.mjs",
-    "test:webgpu-foundation": "tsx tests/scene-frame-description.test.ts && tsx tests/overlay-command-scheduling.test.ts && tsx tests/webgpu-backend-bootstrap.test.ts && tsx tests/webgpu-scene-uniforms.test.ts && tsx tests/webgpu-terrain-plan.test.ts && tsx tests/material-table.test.ts && tsx tests/webgpu-terrain-texture-atlas.test.ts && tsx tests/webgpu-water-mask.test.ts && tsx tests/webgpu-water-fallback.test.ts && tsx tests/webgpu-terrain-comparison.test.ts && tsx tests/webgpu-terrain-pipeline-selection.test.ts && tsx tests/webgpu-height-map.test.ts && tsx tests/loc-placement-metadata.test.ts && tsx tests/loc-placement-serialization.test.ts && tsx tests/webgpu-static-loc-plan.test.ts && tsx tests/webgpu-static-door-plan.test.ts && tsx tests/webgpu-animated-loc-draws.test.ts && tsx tests/webgpu-world-entity-transform.test.ts && tsx tests/webgpu-ground-item-plan.test.ts"
+    "test:webgpu-foundation": "tsx tests/scene-frame-description.test.ts && tsx tests/overlay-command-scheduling.test.ts && tsx tests/webgpu-backend-bootstrap.test.ts && tsx tests/webgpu-scene-uniforms.test.ts && tsx tests/webgpu-terrain-plan.test.ts && tsx tests/material-table.test.ts && tsx tests/webgpu-terrain-texture-atlas.test.ts && tsx tests/webgpu-water-mask.test.ts && tsx tests/webgpu-water-fallback.test.ts && tsx tests/webgpu-terrain-comparison.test.ts && tsx tests/webgpu-terrain-pipeline-selection.test.ts && tsx tests/webgpu-height-map.test.ts && tsx tests/loc-placement-metadata.test.ts && tsx tests/loc-placement-serialization.test.ts && tsx tests/loc-depth-ordering.test.ts && tsx tests/webgpu-static-loc-plan.test.ts && tsx tests/webgpu-static-door-plan.test.ts && tsx tests/webgpu-animated-loc-draws.test.ts && tsx tests/webgpu-world-entity-transform.test.ts && tsx tests/webgpu-ground-item-plan.test.ts"
   },
   "eslintConfig": {
     "extends": [
