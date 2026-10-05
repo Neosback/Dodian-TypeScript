@@ -7,6 +7,10 @@ import {
     createModelInfoTextureData,
 } from "../render/buffer/SceneBuffer";
 import {
+    LOC_ORDERING_ANCHOR_NONE,
+    getLocOrderingAnchorTile,
+} from "../render/loc/LocOrderingMetadata";
+import {
     LOC_PLACEMENT_NONE,
     LOC_PLACEMENT_TRAILER_HEADER_WORDS,
     LOC_PLACEMENT_TRAILER_LEGACY_VERSION,
@@ -111,6 +115,10 @@ const plan = createWebGPUStaticLocPlanFromData(
 );
 
 assert.deepEqual(Array.from(plan.placementMetadata), [wallPlacement, decorationPlacement]);
+assert.deepEqual(Array.from(plan.orderingAnchorTiles), [6, 69, 10, 11]);
+assert.deepEqual(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 0), { x: 6, y: 69 });
+assert.deepEqual(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 1), { x: 10, y: 11 });
+assert.equal(getLocOrderingAnchorTile(plan.orderingAnchorTiles, 2), undefined);
 assert.equal(plan.modelInfoWords[3] & 0xffff, 42);
 assert.equal(
     plan.modelInfoWords[3] >>> 16,
@@ -123,7 +131,7 @@ assert.equal(
 );
 
 // Version-1 trailers remain readable. They only carried placement identity, so
-// their decoded values intentionally have no anchor high word.
+// their decoded values intentionally have no anchor high word or ordering anchor.
 const legacyTrailerData = modelData.slice();
 legacyTrailerData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_LEGACY_VERSION;
 legacyTrailerData[payloadOffset] = getLocPlacementIdentity(wallPlacement);
@@ -140,6 +148,13 @@ assert.deepEqual(Array.from(legacyTrailerPlan.placementMetadata), [
     getLocPlacementIdentity(wallPlacement),
     getLocPlacementIdentity(decorationPlacement),
 ]);
+assert.deepEqual(Array.from(legacyTrailerPlan.orderingAnchorTiles), [
+    LOC_ORDERING_ANCHOR_NONE,
+    LOC_ORDERING_ANCHOR_NONE,
+    LOC_ORDERING_ANCHOR_NONE,
+    LOC_ORDERING_ANCHOR_NONE,
+]);
+assert.equal(getLocOrderingAnchorTile(legacyTrailerPlan.orderingAnchorTiles, 0), undefined);
 assert.equal(
     legacyTrailerPlan.modelInfoWords[3] >>> 16,
     encodeLocPlacementMetadataForWebGPU(wallPlacement),
@@ -163,6 +178,11 @@ const legacyPlan = createWebGPUStaticLocPlanFromData(
     new Uint8Array([1]),
 );
 assert.deepEqual(Array.from(legacyPlan.placementMetadata), [LOC_PLACEMENT_NONE]);
+assert.deepEqual(Array.from(legacyPlan.orderingAnchorTiles), [
+    LOC_ORDERING_ANCHOR_NONE,
+    LOC_ORDERING_ANCHOR_NONE,
+]);
+assert.equal(getLocOrderingAnchorTile(legacyPlan.orderingAnchorTiles, 0), undefined);
 assert.equal(legacyPlan.modelInfoWords[3], 77);
 
 const malformed = modelData.slice();
@@ -180,4 +200,4 @@ assert.throws(
     /trailer exceeds model-info data/,
 );
 
-console.log("loc placement serialization and WebGPU bridge checks passed");
+console.log("loc placement serialization and WebGPU ordering bridge checks passed");
