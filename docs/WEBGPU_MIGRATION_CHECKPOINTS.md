@@ -111,10 +111,14 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, and ground-item parity implemented; specialized ordering remains pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, and wall/decor placement-metadata plumbing implemented; specialized depth/order rules remain pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
+- Preserve renderer-neutral loc model type, source rotation, and primary/secondary scene-part identity from `getSceneLocs`, including two-part walls and double wall decorations.
+- Append a versioned placement-metadata trailer after the legacy model-info header/instance records so WebGL2 continues consuming the same texels and worker payload type while WebGPU can opt into the additional ordering metadata.
+- Split merged static-model draw runs only when placement identity changes, preserving scene order while preventing incompatible wall/decor placements from collapsing behind one synthetic model-info record.
+- Parse the optional trailer in the WebGPU loc plan with backward compatibility for older packets, and fold its encoded value into the unused upper 16 bits of `info.w` while retaining the legacy interaction ID in the lower 16 bits.
 - Upload the existing four-plane signed height map as `r16sint`, with WebGPU row padding, and port the same two-diagonal contour interpolation used by GLSL.
 - Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
 - Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, brightness, and height contouring.
