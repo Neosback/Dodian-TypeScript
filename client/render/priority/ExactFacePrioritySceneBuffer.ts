@@ -3,6 +3,11 @@ import type { vec3 } from "gl-matrix";
 import type { Model } from "../../rs/model/Model";
 import { type ModelFace, SceneBuffer } from "../buffer/SceneBuffer";
 
+function getExactFacePriority(model: Model, face: ModelFace): number {
+    const priorities = model.faceRenderPriorities;
+    return priorities ? priorities[face.index] | 0 : model.priority | 0;
+}
+
 /**
  * SceneBuffer variant for model-only geometry that preserves the original
  * uncompressed 0..11 face priority for every emitted triangle.
@@ -24,11 +29,13 @@ export class ExactFacePrioritySceneBuffer extends SceneBuffer {
             return;
         }
 
-        for (const face of faces) {
-            const priority = face.priority | 0;
+        const priorities = new Uint8Array(faces.length);
+        for (let i = 0; i < faces.length; i++) {
+            const priority = getExactFacePriority(model, faces[i]);
             if (priority < 0 || priority > 11) {
                 throw new Error(`Face priority must be in 0..11, got ${priority}`);
             }
+            priorities[i] = priority;
         }
 
         const firstIndex = this.indices.length;
@@ -41,8 +48,8 @@ export class ExactFacePrioritySceneBuffer extends SceneBuffer {
             );
         }
 
-        for (const face of faces) {
-            this.exactFacePriorities.push(face.priority & 0xff);
+        for (const priority of priorities) {
+            this.exactFacePriorities.push(priority);
         }
         this.exactFacePriorityModelSpans.push(firstIndex, indexCount);
     }
