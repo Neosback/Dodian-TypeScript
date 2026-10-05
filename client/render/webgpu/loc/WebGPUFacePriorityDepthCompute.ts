@@ -308,8 +308,21 @@ fn projectedFrontFacing(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> bool {
     let ca = projectedPosition(a);
     let cb = projectedPosition(b);
     let cc = projectedPosition(c);
-    if (ca.w <= 0.0 || cb.w <= 0.0 || cc.w <= 0.0) {
+    let aInFront = ca.w > 0.0;
+    let bInFront = cb.w > 0.0;
+    let cInFront = cc.w > 0.0;
+    let frontCount =
+        select(0u, 1u, aInFront) +
+        select(0u, 1u, bInFront) +
+        select(0u, 1u, cInFront);
+    if (frontCount == 0u) {
         return false;
+    }
+    if (frontCount < 3u) {
+        // The primitive crosses the camera plane. Winding before clipping is not
+        // a valid rejection test, so keep it in the priority stream and let the
+        // hardware clipper/rasterizer decide its visible fragment.
+        return true;
     }
     let pa = ca.xy / ca.w;
     let pb = cb.xy / cb.w;
