@@ -14,7 +14,10 @@ import { clampPlane } from "../../game/utils/PlaneUtil";
 import { InteractType } from "../../render/InteractType";
 import { ContourGroundType, SceneModel } from "../buffer/SceneBuffer";
 import { embeddedWallDecorationShift, wallDecorationNudge } from "../../rs/scene/WallDecorationOffset";
-import { packLocPlacementMetadata } from "./LocPlacementMetadata";
+import {
+    encodeLocPlacementFootprint,
+    packLocPlacementMetadata,
+} from "./LocPlacementMetadata";
 import { SceneLocEntity } from "./SceneLocEntity";
 
 export type SceneLocs = {
@@ -27,6 +30,16 @@ const LAST_ROOF_TYPE = LocModelType.ROOF_SLOPED_OVERHANG_HARD_OUTER_CORNER;
 
 function isRoofLocModelType(modelType: number): boolean {
     return modelType >= FIRST_ROOF_TYPE && modelType <= LAST_ROOF_TYPE;
+}
+
+function getSceneLocPlacementFootprint(sceneLoc: SceneLoc): number {
+    if (sceneLoc instanceof Loc) {
+        return encodeLocPlacementFootprint(
+            Math.max(1, (sceneLoc.endX - sceneLoc.startX + 1) | 0),
+            Math.max(1, (sceneLoc.endY - sceneLoc.startY + 1) | 0),
+        );
+    }
+    return encodeLocPlacementFootprint(1, 1);
 }
 
 function getLocPlaneCullLevel(
@@ -170,6 +183,7 @@ export function createSceneModel(
             tileX,
             tileY,
         ),
+        placementFootprint: getSceneLocPlacementFootprint(sceneLoc),
     };
 }
 
@@ -218,6 +232,7 @@ export function createSceneLocEntity(
             tileX,
             tileY,
         ),
+        placementFootprint: getSceneLocPlacementFootprint(sceneLoc),
     };
 }
 
