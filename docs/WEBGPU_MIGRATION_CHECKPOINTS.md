@@ -51,7 +51,7 @@ Status: bootstrap infrastructure implemented on this branch.
 - Resolve backend order with WebGPU preferred in auto mode and WebGL2 retained as fallback.
 - Execute device-level fallback when WebGPU adapter/device initialization fails, while deferring WebGL2 context creation to the concrete renderer.
 - Add async high-performance WebGPU adapter/device initialization.
-- Keep device creation separate from canvas context acquisition so fallback can replace the canvas instead of attempting two graphics context types on one element.
+- Keep device creation separate from canvas context acquisition so fallback can replace the canvas instead of attempting two graphics context types on one canvas.
 - Configure the preferred WebGPU canvas format and explicit alpha mode.
 - Report uncaptured validation errors and device-loss details through callbacks.
 - Add WGSL compilation diagnostics that surface line/column errors before pipeline creation.
@@ -111,7 +111,7 @@ Status: water shader/resources and opt-in A/B activation implemented.
 
 #### 3C. Static scenery/locs
 
-Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, and wall/decor placement-metadata plumbing implemented; specialized depth/order rules remain pending.
+Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range parity, primary world-entity transforms, ground-item parity, placement-metadata plumbing, and cardinal/decoration camera-relative depth rules implemented; diagonal boundary ordering and full face priority remain pending.
 
 - Reuse the worker's existing 12-byte packed loc vertex/index payload without repacking geometry.
 - Decode the existing `modelTextureData` draw headers and instance records into a WebGPU storage buffer rather than creating a second placement format.
@@ -119,6 +119,15 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Append a versioned placement-metadata trailer after the legacy model-info header/instance records so WebGL2 continues consuming the same texels and worker payload type while WebGPU can opt into the additional ordering metadata.
 - Split merged static-model draw runs only when placement identity changes, preserving scene order while preventing incompatible wall/decor placements from collapsing behind one synthetic model-info record.
 - Parse the optional trailer in the WebGPU loc plan with backward compatibility for older packets, and fold its encoded value into the unused upper 16 bits of `info.w` while retaining the legacy interaction ID in the lower 16 bits.
+- Define renderer-neutral CPU reference rules for the documented `3/128` ground pull, `2/128` wall-decoration pull, `10/128` wall-behind push, `8/128` roof pull, and `2/128` per-plane bias.
+- Match the original cardinal boundary orientation table `{1,2,4,8}`, including the second part of type-2 corner walls, without incorrectly mapping type-1/type-3 diagonal boundary masks into cardinal edges.
+- Reproduce the software client's `orientation == 256` camera comparison for decoration types 6, 7, and 8 so only the painter-selected diagonal decoration part remains visible.
+- Inject the same CPU-tested placement rules into the A/B WGSL shader through the existing static-scene shader-source transform, decoding placement metadata from the upper half of `info.w` without changing the legacy WebGL model-info ABI.
+- Replace the provisional terrain/loc plane `0.001` offset in the transformed WebGPU shader with the documented `2/128` per-plane separation so terrain and placed geometry use the same plane convention.
+- Apply cardinal wall push-back only while the camera is not outside that wall edge, flip cardinal wall decorations between front/back pulls based on camera side, and apply ground/roof pulls from the same placement classification used by the CPU reference.
+- Preserve the old model-priority nudge only for legacy/non-placement records; placement-aware locs use the explicit wall/decor/roof/ground rules instead.
+- Keep the temporary packed 3-bit per-face depth bias for now. Full OSRS face-priority 0..11 sorting and priority 10/11 threshold behavior remain the next dedicated ordering checkpoint.
+- Leave type-1/type-3 diagonal boundary pieces on zero special pull for now rather than inventing a cardinal approximation; their original 16/32/64/128 delayed-wall ordering remains explicit follow-up work.
 - Upload the existing four-plane signed height map as `r16sint`, with WebGPU row padding, and port the same two-diagonal contour interpolation used by GLSL.
 - Render ordinary opaque `loc` geometry after each map square's opaque terrain, matching the current WebGL map-local ordering.
 - Preserve render plane, roof-cull plane, model priority, per-face priority, texture animation, fog, map load fade, brightness, and height contouring.
@@ -155,13 +164,13 @@ Status: opaque, alpha, LOD, mutable replacement, doors, animated loc draw-range 
 - Ground-item texture loads already flow through `updateTextureArray`, which mirrors the streamed pixel payload into the WebGPU comparison before the WebGL array upload path.
 - Preserve WebGL's missing-model retry behavior because the WebGPU snapshot is produced by the same CPU rebuild attempt; an empty/failed build clears the comparison geometry until the authoritative builder produces a later revision.
 - Loc, door, and ground-item resources currently own separate copies of the small per-map signed height texture to keep their replacement lifetimes independent; consolidate this to shared map-level ownership during performance hardening if profiling justifies it.
-- Remaining static-scene work is the dedicated wall/decor depth/order rules. Special world-entity overlap/ghost rendering remains later ordering/parity work.
+- Remaining static-scene ordering work is the type-1/type-3 diagonal boundary delayed-wall path plus full face-priority ordering. Special world-entity overlap/ghost rendering remains later ordering/parity work.
 
 ### 4. Ordering, depth, culling, and picking
 
-Status: pending.
+Status: in progress.
 
-Carry over face priorities, wall/decor depth rules, back-face culling, chunk culling, and asynchronous picking.
+Cardinal wall/decor camera-relative depth rules and diagonal decoration selection are now implemented in the WebGPU comparison. Remaining work includes type-1/type-3 diagonal boundary delayed-wall ordering, full 0..11 face priorities, chunk/entity culling parity, and asynchronous picking.
 
 ### 5. Dynamic scene
 
