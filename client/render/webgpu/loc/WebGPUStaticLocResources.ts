@@ -64,7 +64,15 @@ export type WebGPUStaticLocGeometryData = Pick<
     | "drawRangesPlanes"
 >;
 
-export type WebGPUStaticLocPassKind = "opaque" | "alpha" | "lod" | "lodAlpha";
+export type WebGPUStaticLocPassKind =
+    | "opaque"
+    | "alpha"
+    | "lod"
+    | "lodAlpha"
+    | "interactOpaque"
+    | "interactAlpha"
+    | "interactLod"
+    | "interactLodAlpha";
 
 export interface WebGPUStaticLocPassResources {
     readonly modelInfoBuffer: WebGPUBufferLike;
@@ -370,6 +378,7 @@ export function applyWebGPUAnimatedLocDrawRanges(
     transparent: boolean,
     lod: boolean,
     facePrioritySortResources?: WebGPUFacePrioritySortResources,
+    interact: boolean = false,
 ): number {
     if (!pass || locsAnimated.length === 0) {
         return 0;
@@ -386,7 +395,7 @@ export function applyWebGPUAnimatedLocDrawRanges(
             continue;
         }
 
-        const sourceIndex = loc.getDrawRangeIndex(transparent, false, lod);
+        const sourceIndex = loc.getDrawRangeIndex(transparent, interact, lod);
         if (sourceIndex < 0 || sourceIndex >= pass.drawsBySourceIndex.length) {
             continue;
         }
@@ -438,6 +447,22 @@ export function syncWebGPUAnimatedLocsForMap(
             true,
             lod,
             resources.facePrioritySortResources,
+        ) +
+        applyWebGPUAnimatedLocDrawRanges(
+            resources.getInteractPass(false, lod),
+            locsAnimated,
+            false,
+            lod,
+            resources.facePrioritySortResources,
+            true,
+        ) +
+        applyWebGPUAnimatedLocDrawRanges(
+            resources.getInteractPass(true, lod),
+            locsAnimated,
+            true,
+            lod,
+            resources.facePrioritySortResources,
+            true,
         )
     );
 }
@@ -446,16 +471,17 @@ export class WebGPUStaticLocResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
     readonly heightMap: WebGPUHeightMapResources;
-    /** Exact uncompressed 0..11 priority for each source triangle. */
     readonly facePriorities: Uint8Array;
-    /** `[firstIndex, indexCount]` pairs preserving model-local sort boundaries. */
     readonly facePriorityModelSpans: Uint32Array;
-    /** GPU-side invariant data plus pass-local exact depth/sort runtime ownership. */
     readonly facePrioritySortResources?: WebGPUFacePrioritySortResources;
     readonly opaque?: WebGPUStaticLocPassResources;
     readonly alpha?: WebGPUStaticLocPassResources;
     readonly lod?: WebGPUStaticLocPassResources;
     readonly lodAlpha?: WebGPUStaticLocPassResources;
+    readonly interactOpaque?: WebGPUStaticLocPassResources;
+    readonly interactAlpha?: WebGPUStaticLocPassResources;
+    readonly interactLod?: WebGPUStaticLocPassResources;
+    readonly interactLodAlpha?: WebGPUStaticLocPassResources;
 
     private readonly registryDevice?: WebGPUDeviceLike;
     private readonly registryMapId?: number;
@@ -516,53 +542,72 @@ export class WebGPUStaticLocResources {
             arrayLayerCount: WEBGPU_HEIGHT_MAP_LAYERS,
         });
 
-        this.opaque = createPassResources(
-            device,
-            bindGroupLayout,
-            heightMapView,
-            mapX,
-            mapY,
+        const create = (
+            kind: WebGPUStaticLocPassKind,
+            modelData: Uint16Array,
+            ranges: readonly DrawRange[],
+            planes: Uint8Array,
+        ) =>
+            createPassResources(
+                device,
+                bindGroupLayout,
+                heightMapView,
+                mapX,
+                mapY,
+                kind,
+                modelData,
+                ranges,
+                planes,
+                this.facePrioritySortResources,
+            );
+
+        this.opaque = create(
             "opaque",
             geometry.modelTextureData,
             geometry.drawRanges,
             geometry.drawRangesPlanes,
-            this.facePrioritySortResources,
         );
-        this.alpha = createPassResources(
-            device,
-            bindGroupLayout,
-            heightMapView,
-            mapX,
-            mapY,
+        this.alpha = create(
             "alpha",
             geometry.modelTextureDataAlpha,
             geometry.drawRangesAlpha,
             geometry.drawRangesAlphaPlanes,
-            this.facePrioritySortResources,
         );
-        this.lod = createPassResources(
-            device,
-            bindGroupLayout,
-            heightMapView,
-            mapX,
-            mapY,
+        this.lod = create(
             "lod",
             geometry.modelTextureDataLod,
             geometry.drawRangesLod,
             geometry.drawRangesLodPlanes,
-            this.facePrioritySortResources,
         );
-        this.lodAlpha = createPassResources(
-            device,
-            bindGroupLayout,
-            heightMapView,
-            mapX,
-            mapY,
+        this.lodAlpha = create(
             "lodAlpha",
             geometry.modelTextureDataLodAlpha,
             geometry.drawRangesLodAlpha,
             geometry.drawRangesLodAlphaPlanes,
-            this.facePrioritySortResources,
+        );
+        this.interactOpaque = create(
+            "interactOpaque",
+            geometry.modelTextureDataInteract,
+            geometry.drawRangesInteract,
+            geometry.drawRangesInteractPlanes,
+        );
+        this.interactAlpha = create(
+            "interactAlpha",
+            geometry.modelTextureDataInteractAlpha,
+            geometry.drawRangesInteractAlpha,
+            geometry.drawRangesInteractAlphaPlanes,
+        );
+        this.interactLod = create(
+            "interactLod",
+            geometry.modelTextureDataInteractLod,
+            geometry.drawRangesInteractLod,
+            geometry.drawRangesInteractLodPlanes,
+        );
+        this.interactLodAlpha = create(
+            "interactLodAlpha",
+            geometry.modelTextureDataInteractLodAlpha,
+            geometry.drawRangesInteractLodAlpha,
+            geometry.drawRangesInteractLodAlphaPlanes,
         );
 
         if (registerForAnimation) {
@@ -578,12 +623,10 @@ export class WebGPUStaticLocResources {
         }
     }
 
-    /** Backward-compatible ordinary opaque access used by the first loc checkpoint. */
     get draws(): WebGPUStaticLocDrawPlanEntry[] {
         return this.opaque?.draws ?? EMPTY_DRAWS;
     }
 
-    /** Backward-compatible ordinary opaque access used by the first loc checkpoint. */
     get bindGroup(): WebGPUBindGroupLike {
         if (!this.opaque) {
             throw new Error("Opaque static-loc resources are unavailable");
@@ -598,6 +641,16 @@ export class WebGPUStaticLocResources {
         return transparent ? this.alpha : this.opaque;
     }
 
+    getInteractPass(
+        transparent: boolean,
+        lod: boolean,
+    ): WebGPUStaticLocPassResources | undefined {
+        if (lod) {
+            return transparent ? this.interactLodAlpha : this.interactLod;
+        }
+        return transparent ? this.interactAlpha : this.interactOpaque;
+    }
+
     dispose(): void {
         if (this.registryDevice && this.registryMapId !== undefined) {
             const registry = LOC_RESOURCES_BY_DEVICE.get(this.registryDevice as object);
@@ -608,7 +661,16 @@ export class WebGPUStaticLocResources {
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
         this.facePrioritySortResources?.dispose();
-        for (const pass of [this.opaque, this.alpha, this.lod, this.lodAlpha]) {
+        for (const pass of [
+            this.opaque,
+            this.alpha,
+            this.lod,
+            this.lodAlpha,
+            this.interactOpaque,
+            this.interactAlpha,
+            this.interactLod,
+            this.interactLodAlpha,
+        ]) {
             pass?.modelInfoBuffer.destroy?.();
             if (pass) {
                 pass.draws.length = 0;
