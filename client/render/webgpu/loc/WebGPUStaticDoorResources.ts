@@ -11,6 +11,8 @@ export function createWebGPUStaticDoorGeometryData(data: SdMapData): LocGeometry
     return {
         vertices: data.doorVertices,
         indices: data.doorIndices,
+        facePriorities: data.doorFacePriorities,
+        facePriorityModelSpans: data.doorFacePriorityModelSpans,
 
         modelTextureData: data.doorModelTextureData,
         modelTextureDataAlpha: data.doorModelTextureDataAlpha,
