@@ -24,6 +24,8 @@ modelTextureData[15] = 99;
 const plan = createWebGPUStaticLocPlan({
     vertices: new Uint8Array(24),
     indices: new Int32Array([0, 1, 2, 3, 4, 5]),
+    facePriorities: new Uint8Array([2, 11]),
+    facePriorityModelSpans: new Uint32Array([0, 3, 3, 3]),
     modelTextureData,
     drawRanges: [
         [0, 3, 1],
@@ -150,7 +152,9 @@ assert.throws(
     () =>
         createWebGPUStaticLocPlan({
             vertices: new Uint8Array(12),
-            indices: new Int32Array([0]),
+            indices: new Int32Array([0, 1, 2]),
+            facePriorities: new Uint8Array([0]),
+            facePriorityModelSpans: new Uint32Array([0, 3]),
             modelTextureData: new Uint16Array([1, 0, 0, 0]),
             drawRanges: [[2, 1, 1]],
             drawRangesPlanes: new Uint8Array([0]),
