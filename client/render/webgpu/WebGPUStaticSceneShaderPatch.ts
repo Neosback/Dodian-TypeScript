@@ -21,13 +21,61 @@ const PATCHED_MAP_UNIFORM_STRUCT = `struct MapUniforms {
     plane: f32,
     loadTime: f32,
     borderSize: f32,
-    _padding0: f32,
+    mapId: u32,
     _padding1: vec2<f32>,
     worldEntityTransform: mat4x4<f32>,
 };`;
 
 const LOC_MODEL_INFO_BINDINGS = `@group(4) @binding(0) var locHeightMap: texture_2d_array<i32>;
 @group(4) @binding(1) var<storage, read> locModelInfos: LocModelInfoBuffer;`;
+
+const VERTEX_OUTPUT_STRUCT = `struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) fogAmount: f32,
+    @location(2) texCoord: vec2<f32>,
+    @location(3) @interpolate(flat) textureId: u32,
+    @location(4) @interpolate(flat) alphaCutOff: f32,
+    @location(5) worldUv: vec2<f32>,
+    @location(6) worldPos: vec3<f32>,
+    @location(7) @interpolate(flat) plane: f32,
+};`;
+
+const PATCHED_VERTEX_OUTPUT_STRUCT = `struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) fogAmount: f32,
+    @location(2) texCoord: vec2<f32>,
+    @location(3) @interpolate(flat) textureId: u32,
+    @location(4) @interpolate(flat) alphaCutOff: f32,
+    @location(5) worldUv: vec2<f32>,
+    @location(6) worldPos: vec3<f32>,
+    @location(7) @interpolate(flat) plane: f32,
+    @location(8) @interpolate(flat) pickData: vec4<u32>,
+};`;
+
+const STATIC_PICK_WGSL = /* wgsl */ `
+fn staticPickPackedTile(worldUv: vec2<f32>, plane: u32) -> u32 {
+    let tileX = u32(clamp(i32(floor(worldUv.x)), 0, 0x3fff));
+    let tileY = u32(clamp(i32(floor(worldUv.y)), 0, 0x3fff));
+    return tileX | (tileY << 14u) | ((plane & 0x3u) << 28u);
+}
+
+fn staticPickData(
+    interactId: u32,
+    mapId: u32,
+    interactType: u32,
+    worldUv: vec2<f32>,
+    plane: u32,
+) -> vec4<u32> {
+    return vec4<u32>(
+        interactId,
+        mapId,
+        interactType,
+        staticPickPackedTile(worldUv, plane) + 1u,
+    );
+}
+`;
 
 const LOC_DEPTH_ORDERING_WGSL = /* wgsl */ `
 const LOC_OBJECT_GROUND_PULL: f32 = ${OBJECT_GROUND_PULL};
@@ -167,8 +215,6 @@ fn locBaseCameraPullTiles(
     if (modelType <= LOC_TYPE_WALL_RECT_CORNER) {
         let edgeMask = locCardinalEdgeMask(metadata);
         if (edgeMask == 0u) {
-            // Types 1/3 use the software client's separate diagonal
-            // 16/32/64/128 delayed-wall ordering. Do not fake a cardinal edge.
             return 0.0;
         }
         let outside = locCameraOutsideCardinalEdge(
@@ -224,11 +270,38 @@ fn locCameraPullTiles(
 }
 `;
 
-const PATCHED_LOC_MODEL_INFO_BINDINGS = `${LOC_MODEL_INFO_BINDINGS}\n${LOC_DEPTH_ORDERING_WGSL}`;
+const PATCHED_LOC_MODEL_INFO_BINDINGS =
+    `${LOC_MODEL_INFO_BINDINGS}\n${STATIC_PICK_WGSL}\n${LOC_DEPTH_ORDERING_WGSL}`;
 
 const TERRAIN_PLANE_BIAS_LINE = "viewPos.z += map.plane * 0.001;";
 const PATCHED_TERRAIN_PLANE_BIAS_LINE =
     "viewPos.z += map.plane * LOC_PLANE_DEPTH_BIAS;";
+
+const TERRAIN_PICK_SITE = `    output.worldUv = worldPos.xz;
+    output.worldPos = worldPos;
+    output.plane = map.plane;`;
+const PATCHED_TERRAIN_PICK_SITE = `${TERRAIN_PICK_SITE}
+    output.pickData = staticPickData(0xffffu, map.mapId, 0u, worldPos.xz, u32(max(map.plane, 0.0)));`;
+
+const LOC_PICK_SITE = `    output.worldUv = worldPos.xz;
+    output.worldPos = worldPos;
+
+    let loadAlpha`;
+const PATCHED_LOC_PICK_SITE = `    output.worldUv = worldPos.xz;
+    output.worldPos = worldPos;
+    let interactId = (info.w & 0xffffu) | (((info.z >> 3u) & 0x1u) << 16u);
+    let interactType = (info.z >> 4u) & 0x3u;
+    output.pickData = staticPickData(interactId, map.mapId, interactType, worldPos.xz, plane);
+
+    let loadAlpha`;
+
+const ROOF_CULL_RETURN_SITE = `        output.worldUv = vec2<f32>(0.0);
+        output.worldPos = vec3<f32>(0.0);
+        return output;`;
+const PATCHED_ROOF_CULL_RETURN_SITE = `        output.worldUv = vec2<f32>(0.0);
+        output.worldPos = vec3<f32>(0.0);
+        output.pickData = vec4<u32>(0u);
+        return output;`;
 
 const LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(worldPos, 1.0);
     viewPos.z += f32(plane) * 0.001;
@@ -245,6 +318,7 @@ const PATCHED_LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(
         if (!locPlacementPartVisible(placementMetadata, locCenterTiles, scene.cameraPos)) {
             output.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
             output.color = vec4<f32>(0.0);
+            output.pickData = vec4<u32>(0u);
             return output;
         }
         viewPos.z += locCameraPullTiles(
@@ -254,9 +328,6 @@ const PATCHED_LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(
             scene.cameraPos,
         );
     } else {
-        // Legacy packets and non-loc geometry do not carry placement metadata.
-        // Keep their model-priority bias; exact face priority is now handled by
-        // the pass-local sorted index stream rather than a packed 3-bit Z nudge.
         viewPos.z += f32(plane) * LOC_PLANE_DEPTH_BIAS;
         if (modelPriority > 0u) {
             viewPos.z += f32(modelPriority) * 0.001;
@@ -276,19 +347,45 @@ const VIEW_POSITION_LINE =
 const PATCHED_VIEW_POSITION_LINE =
     "var viewPos = map.worldEntityTransform * (scene.viewMatrix * vec4<f32>(worldPos, 1.0));";
 
+const ALPHA_FRAGMENT_BLOCK = `@fragment
+fn fsMainAlpha(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Match the WebGL DISCARD_ALPHA program: test the base texture sample
+    // before the animated-frame sampling and the rest of the water/fog work.
+    let textureColor = sampleTextureAtlas(input.textureId, input.texCoord);
+    let alpha = textureColor.a * input.color.a;
+    if (
+        (input.textureId == 0u && alpha < 0.01) ||
+        textureColor.a < input.alphaCutOff
+    ) {
+        discard;
+    }
+    return shadeFragment(input);
+}`;
+
+const PATCHED_ALPHA_FRAGMENT_BLOCK = `${ALPHA_FRAGMENT_BLOCK}
+
+@fragment
+fn fsPick(input: VertexOutput) -> @location(0) vec4<u32> {
+    if (input.pickData.w == 0u || input.fogAmount >= 1.0) {
+        discard;
+    }
+    let textureColor = sampleTextureAtlas(input.textureId, input.texCoord);
+    let alpha = textureColor.a * input.color.a;
+    if (
+        (input.textureId == 0u && alpha < 0.01) ||
+        textureColor.a < input.alphaCutOff
+    ) {
+        discard;
+    }
+    return input.pickData;
+}`;
+
 /**
  * Extend the shared static-scene WGSL with renderer-parity behavior that is
  * intentionally kept outside the terrain-foundation source while the port is
- * staged:
- *
- * - per-map world-entity transforms in the same view->transform->projection
- *   order used by WebGL2;
- * - exact placement metadata decoding for wall/decor/roof/ground ordering;
- * - camera-relative cardinal wall and wall-decoration depth rules;
- * - the software client's orientation=256 selection for decoration types 6..8;
- * - the documented 2/128 per-plane depth separation for terrain and locs;
- * - removal of the obsolete compressed face-priority Z bias now that exact
- *   0..11 painter ordering is supplied by pass-local sorted index buffers.
+ * staged. In addition to world-entity/order parity, the patch exposes a static
+ * integer pick payload and fragment entry point without changing the legacy
+ * WebGL model-info ABI.
  */
 export function patchWebGPUStaticSceneShaderForWorldEntities(code: string): string {
     if (!code.includes(MAP_UNIFORM_STRUCT)) {
@@ -296,6 +393,18 @@ export function patchWebGPUStaticSceneShaderForWorldEntities(code: string): stri
     }
     if (!code.includes(LOC_MODEL_INFO_BINDINGS)) {
         throw new Error("WebGPU static-scene shader loc model-info contract changed");
+    }
+    if (!code.includes(VERTEX_OUTPUT_STRUCT)) {
+        throw new Error("WebGPU static-scene shader VertexOutput contract changed");
+    }
+    if (!code.includes(TERRAIN_PICK_SITE) || !code.includes(LOC_PICK_SITE)) {
+        throw new Error("WebGPU static-scene shader pick vertex contract changed");
+    }
+    if (!code.includes(ROOF_CULL_RETURN_SITE)) {
+        throw new Error("WebGPU static-scene shader roof-cull return contract changed");
+    }
+    if (!code.includes(ALPHA_FRAGMENT_BLOCK)) {
+        throw new Error("WebGPU static-scene shader alpha fragment contract changed");
     }
 
     const viewPositionMatches = code.split(VIEW_POSITION_LINE).length - 1;
@@ -322,11 +431,16 @@ export function patchWebGPUStaticSceneShaderForWorldEntities(code: string): stri
     }
 
     return code
+        .replace(VERTEX_OUTPUT_STRUCT, PATCHED_VERTEX_OUTPUT_STRUCT)
         .replace(LOC_MODEL_INFO_BINDINGS, PATCHED_LOC_MODEL_INFO_BINDINGS)
+        .replace(TERRAIN_PICK_SITE, PATCHED_TERRAIN_PICK_SITE)
+        .replace(LOC_PICK_SITE, PATCHED_LOC_PICK_SITE)
+        .replace(ROOF_CULL_RETURN_SITE, PATCHED_ROOF_CULL_RETURN_SITE)
         .replace(TERRAIN_PLANE_BIAS_LINE, PATCHED_TERRAIN_PLANE_BIAS_LINE)
         .replace(LOC_DEPTH_BLOCK, PATCHED_LOC_DEPTH_BLOCK)
         .replace(LOC_FACE_PRIORITY_BIAS_BLOCK, PATCHED_LOC_FACE_PRIORITY_BIAS_BLOCK)
         .replace(MAP_UNIFORM_STRUCT, PATCHED_MAP_UNIFORM_STRUCT)
+        .replace(ALPHA_FRAGMENT_BLOCK, PATCHED_ALPHA_FRAGMENT_BLOCK)
         .split(VIEW_POSITION_LINE)
         .join(PATCHED_VIEW_POSITION_LINE);
 }
