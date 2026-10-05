@@ -11,6 +11,13 @@ import { DrawRange, newDrawRange } from "../DrawRange";
 import { InteractType } from "../InteractType";
 import { LocAnimatedData } from "../loc/LocAnimatedData";
 import { LocAnimatedGroup } from "../loc/LocAnimatedGroup";
+import {
+    LOC_PLACEMENT_NONE,
+    LOC_PLACEMENT_TRAILER_HEADER_WORDS,
+    LOC_PLACEMENT_TRAILER_MAGIC,
+    LOC_PLACEMENT_TRAILER_VERSION,
+    getLocPlacementTrailerWordOffset,
+} from "../loc/LocPlacementMetadata";
 import { SceneLocEntity } from "../loc/SceneLocEntity";
 import { VertexBuffer } from "./VertexBuffer";
 
@@ -31,6 +38,8 @@ export type ModelInfo = {
     priority: number;
     interactType: InteractType;
     interactId: number;
+    /** Renderer-neutral loc type/rotation/part identity. Omitted for non-loc geometry. */
+    placementMetadata?: number;
 };
 
 export type DrawCommand = {
@@ -376,9 +385,59 @@ export class SceneBuffer {
     }
 
     addModelGroup(group: ModelMergeGroup): void {
-        const groupOffset = this.indexByteOffset();
+        let runOffset = this.indexByteOffset();
+        let runElements = 0;
+        let runPlacementMetadata = LOC_PLACEMENT_NONE;
+
+        const flushMergedRun = (): void => {
+            if (runElements <= 0) {
+                return;
+            }
+
+            const drawCommand: DrawCommand = {
+                offset: runOffset,
+                elements: runElements,
+                instances: [
+                    {
+                        sceneX: 0,
+                        sceneZ: 0,
+                        heightOffset: 0,
+                        level: group.level,
+                        planeCullLevel: group.planeCullLevel,
+                        contourGround: ContourGroundType.NONE,
+                        priority: group.priority,
+                        interactType: InteractType.NONE,
+                        interactId: 0xffff,
+                        placementMetadata: runPlacementMetadata,
+                    },
+                ],
+            };
+
+            if (group.transparent) {
+                this.drawCommandsAlpha.push(drawCommand);
+                if (!group.lowDetail) {
+                    this.drawCommandsLodAlpha.push(drawCommand);
+                }
+            } else {
+                this.drawCommands.push(drawCommand);
+                if (!group.lowDetail) {
+                    this.drawCommandsLod.push(drawCommand);
+                }
+            }
+
+            runElements = 0;
+        };
 
         for (const sceneModel of group.models) {
+            const placementMetadata = sceneModel.placementMetadata ?? LOC_PLACEMENT_NONE;
+            if (runElements > 0 && placementMetadata !== runPlacementMetadata) {
+                flushMergedRun();
+            }
+            if (runElements === 0) {
+                runOffset = this.indexByteOffset();
+                runPlacementMetadata = placementMetadata;
+            }
+
             const model = sceneModel.model;
 
             // Optimized: filter transparency in single pass instead of getModelFaces() + filter()
@@ -395,6 +454,7 @@ export class SceneBuffer {
             const offset = this.indexByteOffset();
             this.addModel(model, faces, vertexOffset);
             const elements = (this.indexByteOffset() - offset) / 4;
+            runElements += elements;
 
             const drawCommand: DrawCommand = {
                 offset: offset,
@@ -410,6 +470,7 @@ export class SceneBuffer {
                         priority: group.priority,
                         interactType: sceneModel.interactType,
                         interactId: sceneModel.interactId,
+                        placementMetadata,
                     },
                 ],
             };
@@ -426,39 +487,7 @@ export class SceneBuffer {
             }
         }
 
-        const groupElements = (this.indexByteOffset() - groupOffset) / 4;
-
-        if (groupElements > 0) {
-            const drawCommand: DrawCommand = {
-                offset: groupOffset,
-                elements: groupElements,
-                instances: [
-                    {
-                        sceneX: 0,
-                        sceneZ: 0,
-                        heightOffset: 0,
-                        level: group.level,
-                        planeCullLevel: group.planeCullLevel,
-                        contourGround: ContourGroundType.NONE,
-                        priority: group.priority,
-                        interactType: InteractType.NONE,
-                        interactId: 0xffff,
-                    },
-                ],
-            };
-
-            if (group.transparent) {
-                this.drawCommandsAlpha.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsLodAlpha.push(drawCommand);
-                }
-            } else {
-                this.drawCommands.push(drawCommand);
-                if (!group.lowDetail) {
-                    this.drawCommandsLod.push(drawCommand);
-                }
-            }
-        }
+        flushMergedRun();
     }
 
     addModel(model: Model, faces: ModelFace[], offset?: vec3, reuseVertices: boolean = true): void {
@@ -738,8 +767,19 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
     }
     const instanceCount = instances.length;
 
-    const dataLength = Math.ceil((drawCommands.length * 4 + instanceCount) / 16) * 16;
-    const textureData = new Uint16Array(Math.max(dataLength, 16) * 4);
+    // Preserve the exact legacy texel layout used by WebGL2, then reserve a
+    // versioned tail for WebGPU-only placement metadata. The legacy shader never
+    // indexes beyond the draw headers and four-word instance records.
+    const legacyDataLength = Math.ceil((drawCommands.length * 4 + instanceCount) / 16) * 16;
+    const legacyWordLength = Math.max(legacyDataLength, 16) * 4;
+    const trailerOffset = getLocPlacementTrailerWordOffset(drawCommands.length, instanceCount);
+    const requiredWordLength =
+        trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS + instanceCount;
+    const alignedRequiredWordLength = Math.ceil(requiredWordLength / 64) * 64;
+    const textureData = new Uint16Array(
+        Math.max(legacyWordLength, alignedRequiredWordLength, 64),
+    );
+
     let dataOffset = 0;
     drawCommands.forEach((cmd, index) => {
         textureData[index * 4] = drawCommands.length + dataOffset;
@@ -765,6 +805,15 @@ export function createModelInfoTextureData(drawCommands: DrawCommand[]): Uint16A
             (Math.round(height / 8) << 8);
         textureData[offset++] = data.interactId;
     });
+
+    textureData[trailerOffset] = LOC_PLACEMENT_TRAILER_MAGIC;
+    textureData[trailerOffset + 1] = LOC_PLACEMENT_TRAILER_VERSION;
+    textureData[trailerOffset + 2] = instanceCount & 0xffff;
+    textureData[trailerOffset + 3] = (instanceCount >>> 16) & 0xffff;
+    for (let index = 0; index < instanceCount; index++) {
+        textureData[trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS + index] =
+            instances[index].placementMetadata ?? LOC_PLACEMENT_NONE;
+    }
 
     return textureData;
 }
