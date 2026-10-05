@@ -4,6 +4,7 @@ import {
     LocDiagonalBoundaryPhase,
     getLocDelayedWallRule,
     getLocDiagonalBoundaryOrientationMask,
+    getLocFootprintSpanMaskAtTile,
     getLocPainterDirectionIndex,
 } from "../render/loc/LocDelayedWallOrdering";
 import { packLocPlacementMetadata } from "../render/loc/LocPlacementMetadata";
@@ -129,6 +130,23 @@ assert.deepEqual(delayed128, {
     blockLocSpan: 1,
     oppositeLocSpan: 8,
 });
+
+// The original scene attaches a four-bit continuation mask to every covered
+// tile of a multi-tile loc. These masks are exactly the data delayed walls test
+// while deciding whether an overlapping loc must be emitted first.
+const footprint = { startX: 10, startY: 20, endX: 12, endY: 22 };
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 10, 20), 6); // north + east
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 11, 20), 7); // west + north + east
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 12, 20), 3); // west + north
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 10, 21), 14); // north + east + south
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 11, 21), 15); // interior
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 12, 22), 9); // west + south
+assert.equal(getLocFootprintSpanMaskAtTile(footprint, 9, 20), 0); // outside footprint
+assert.equal(
+    getLocFootprintSpanMaskAtTile({ startX: 10, startY: 20, endX: 10, endY: 20 }, 10, 20),
+    0,
+    "single-tile locs have no continuation edges",
+);
 
 // Opposite diagonal sector is the one back-phase sector for each orientation.
 const backSectorByRotation = [8, 6, 0, 2] as const;
