@@ -1,6 +1,14 @@
 import type { DrawRange } from "../../DrawRange";
 import type { LocGeometryData } from "../../loader/SdMapData";
 import {
+    LOC_PLACEMENT_NONE,
+    LOC_PLACEMENT_TRAILER_HEADER_WORDS,
+    LOC_PLACEMENT_TRAILER_MAGIC,
+    LOC_PLACEMENT_TRAILER_VERSION,
+    encodeLocPlacementMetadataForWebGPU,
+    getLocPlacementTrailerWordOffset,
+} from "../../loc/LocPlacementMetadata";
+import {
     WEBGPU_BUFFER_USAGE,
     type WebGPUBindGroupLayoutLike,
     type WebGPUBindGroupLike,
@@ -24,6 +32,8 @@ export interface WebGPUStaticLocPlan {
     draws: WebGPUStaticLocDrawPlanEntry[];
     sourceIndices: number[];
     modelInfoWords: Uint32Array;
+    /** Raw uint16 placement values parallel to model-info instances. */
+    placementMetadata: Uint16Array;
 }
 
 export type WebGPUStaticLocGeometryData = Pick<
@@ -85,6 +95,47 @@ function createUploadedBuffer(
     return buffer;
 }
 
+function readPlacementMetadataTrailer(
+    modelData: Uint16Array,
+    drawCount: number,
+    instanceCount: number,
+): Uint16Array {
+    const metadata = new Uint16Array(instanceCount);
+    metadata.fill(LOC_PLACEMENT_NONE);
+
+    const trailerOffset = getLocPlacementTrailerWordOffset(drawCount, instanceCount);
+    const headerEnd = trailerOffset + LOC_PLACEMENT_TRAILER_HEADER_WORDS;
+    if (modelData.length < headerEnd || modelData[trailerOffset] !== LOC_PLACEMENT_TRAILER_MAGIC) {
+        return metadata;
+    }
+
+    const version = modelData[trailerOffset + 1] | 0;
+    if (version !== LOC_PLACEMENT_TRAILER_VERSION) {
+        throw new Error(`Unsupported loc placement metadata trailer version ${version}`);
+    }
+
+    const encodedInstanceCount =
+        (modelData[trailerOffset + 2] | 0) |
+        ((modelData[trailerOffset + 3] | 0) << 16);
+    if (encodedInstanceCount < instanceCount) {
+        throw new Error(
+            `Loc placement metadata is truncated: expected ${instanceCount} instances, trailer contains ${encodedInstanceCount}`,
+        );
+    }
+
+    const metadataEnd = headerEnd + encodedInstanceCount;
+    if (modelData.length < metadataEnd) {
+        throw new Error(
+            `Loc placement metadata trailer exceeds model-info data: expected ${metadataEnd} words, got ${modelData.length}`,
+        );
+    }
+
+    for (let i = 0; i < instanceCount; i++) {
+        metadata[i] = modelData[headerEnd + i];
+    }
+    return metadata;
+}
+
 export function createWebGPUStaticLocPlanFromData(
     modelData: Uint16Array,
     drawRanges: readonly DrawRange[],
@@ -143,12 +194,22 @@ export function createWebGPUStaticLocPlanFromData(
         );
     }
 
+    const placementMetadata = readPlacementMetadataTrailer(modelData, drawCount, maxInstance);
     const modelInfoWords = new Uint32Array(Math.max(4, maxInstance * 4));
-    for (let i = 0; i < maxInstance * 4; i++) {
-        modelInfoWords[i] = modelData[headerWords + i] ?? 0;
+    for (let i = 0; i < maxInstance; i++) {
+        const sourceOffset = headerWords + i * 4;
+        const targetOffset = i * 4;
+        modelInfoWords[targetOffset] = modelData[sourceOffset] ?? 0;
+        modelInfoWords[targetOffset + 1] = modelData[sourceOffset + 1] ?? 0;
+        modelInfoWords[targetOffset + 2] = modelData[sourceOffset + 2] ?? 0;
+
+        const lowWord = modelData[sourceOffset + 3] ?? 0;
+        const encodedPlacement = encodeLocPlacementMetadataForWebGPU(placementMetadata[i]);
+        modelInfoWords[targetOffset + 3] =
+            (lowWord & 0xffff) | ((encodedPlacement & 0xffff) << 16);
     }
 
-    return { draws, sourceIndices, modelInfoWords };
+    return { draws, sourceIndices, modelInfoWords, placementMetadata };
 }
 
 export function createWebGPUStaticLocPlan(
