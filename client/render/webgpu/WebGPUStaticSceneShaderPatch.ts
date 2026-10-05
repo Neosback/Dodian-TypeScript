@@ -234,8 +234,7 @@ const LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(worldPos
     viewPos.z += f32(plane) * 0.001;
     if (modelPriority > 0u) {
         viewPos.z += f32(modelPriority) * 0.001;
-    }
-    let facePriority = (input.packed.z >> 6u) & 0x7u;`;
+    }`;
 
 const PATCHED_LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(worldPos, 1.0);
     let placementEncoded = info.w >> 16u;
@@ -256,13 +255,21 @@ const PATCHED_LOC_DEPTH_BLOCK = `    var viewPos = scene.viewMatrix * vec4<f32>(
         );
     } else {
         // Legacy packets and non-loc geometry do not carry placement metadata.
-        // Keep their temporary model-priority bias until the face-priority pass.
+        // Keep their model-priority bias; exact face priority is now handled by
+        // the pass-local sorted index stream rather than a packed 3-bit Z nudge.
         viewPos.z += f32(plane) * LOC_PLANE_DEPTH_BIAS;
         if (modelPriority > 0u) {
             viewPos.z += f32(modelPriority) * 0.001;
         }
-    }
-    let facePriority = (input.packed.z >> 6u) & 0x7u;`;
+    }`;
+
+const LOC_FACE_PRIORITY_BIAS_BLOCK = `    let facePriority = (input.packed.z >> 6u) & 0x7u;
+    if (facePriority > 0u) {
+        viewPos.z += f32(facePriority) * 0.001;
+    }`;
+
+const PATCHED_LOC_FACE_PRIORITY_BIAS_BLOCK = `    // Exact 0..11 face priority is expressed by triangle/index order.
+    // Do not perturb depth with the legacy compressed 3-bit approximation.`;
 
 const VIEW_POSITION_LINE =
     "var viewPos = scene.viewMatrix * vec4<f32>(worldPos, 1.0);";
@@ -279,10 +286,9 @@ const PATCHED_VIEW_POSITION_LINE =
  * - exact placement metadata decoding for wall/decor/roof/ground ordering;
  * - camera-relative cardinal wall and wall-decoration depth rules;
  * - the software client's orientation=256 selection for decoration types 6..8;
- * - the documented 2/128 per-plane depth separation for terrain and locs.
- *
- * The temporary 3-bit face-priority bias remains until the dedicated full
- * 0..11 face-priority sorting checkpoint.
+ * - the documented 2/128 per-plane depth separation for terrain and locs;
+ * - removal of the obsolete compressed face-priority Z bias now that exact
+ *   0..11 painter ordering is supplied by pass-local sorted index buffers.
  */
 export function patchWebGPUStaticSceneShaderForWorldEntities(code: string): string {
     if (!code.includes(MAP_UNIFORM_STRUCT)) {
@@ -308,11 +314,18 @@ export function patchWebGPUStaticSceneShaderForWorldEntities(code: string): stri
     if (!code.includes(LOC_DEPTH_BLOCK)) {
         throw new Error("WebGPU static-scene loc depth-ordering contract changed");
     }
+    const facePriorityBiasMatches = code.split(LOC_FACE_PRIORITY_BIAS_BLOCK).length - 1;
+    if (facePriorityBiasMatches !== 1) {
+        throw new Error(
+            `Expected one temporary face-priority bias site, found ${facePriorityBiasMatches}`,
+        );
+    }
 
     return code
         .replace(LOC_MODEL_INFO_BINDINGS, PATCHED_LOC_MODEL_INFO_BINDINGS)
         .replace(TERRAIN_PLANE_BIAS_LINE, PATCHED_TERRAIN_PLANE_BIAS_LINE)
         .replace(LOC_DEPTH_BLOCK, PATCHED_LOC_DEPTH_BLOCK)
+        .replace(LOC_FACE_PRIORITY_BIAS_BLOCK, PATCHED_LOC_FACE_PRIORITY_BIAS_BLOCK)
         .replace(MAP_UNIFORM_STRUCT, PATCHED_MAP_UNIFORM_STRUCT)
         .split(VIEW_POSITION_LINE)
         .join(PATCHED_VIEW_POSITION_LINE);
