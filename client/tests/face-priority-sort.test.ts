@@ -45,12 +45,15 @@ assert.deepEqual(
     [3, 0, 1, 2],
 );
 
-// Priority 10 and 11 are NOT merged by depth. The original exhausts the p10
-// stream before switching to p11, so a very-far p11 face can remain behind a
-// nearer p10 face when p10 has not crossed an insertion threshold.
+// Priority 10 and 11 are NOT merged by depth. Keep all three insertion
+// thresholds above the p10 depth: even though p11 is much farther away, it
+// cannot advance until the nearer p10 stream is exhausted after priority 9.
 assert.deepEqual(
-    createFacePriorityDrawOrder([10, 100, 20, 20, 1], [10, 11, 1, 2, 0]),
-    [4, 2, 3, 0, 1],
+    createFacePriorityDrawOrder(
+        [10, 100, 20, 20, 20, 20, 20, 20, 1],
+        [10, 11, 1, 2, 3, 4, 6, 8, 0],
+    ),
+    [8, 2, 3, 4, 5, 6, 7, 0, 1],
 );
 
 // Empty threshold pairs use zero, matching the client's initialized averages.
