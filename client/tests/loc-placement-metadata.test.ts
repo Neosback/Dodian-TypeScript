@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 
 import { LocModelType } from "../rs/config/loctype/LocModelType";
 import {
+    LOC_PLACEMENT_FOOTPRINT_NONE,
     LOC_PLACEMENT_NONE,
     LocPlacementClassFlag,
     decodeLocPlacementAnchorTile,
+    decodeLocPlacementFootprint,
     encodeLocPlacementAnchorTile,
+    encodeLocPlacementFootprint,
     getEncodedLocPlacementAnchor,
     getLocPlacementClassFlags,
     getLocPlacementIdentity,
@@ -70,6 +73,20 @@ assert.throws(() => encodeLocPlacementAnchorTile(-1, 0), /within 0\.\.254/);
 assert.throws(() => encodeLocPlacementAnchorTile(255, 0), /within 0\.\.254/);
 assert.throws(() => encodeLocPlacementAnchorTile(0, 255), /within 0\.\.254/);
 
+assert.equal(decodeLocPlacementFootprint(LOC_PLACEMENT_FOOTPRINT_NONE), undefined);
+assert.deepEqual(decodeLocPlacementFootprint(encodeLocPlacementFootprint(1, 1)), {
+    sizeX: 1,
+    sizeY: 1,
+});
+assert.deepEqual(decodeLocPlacementFootprint(encodeLocPlacementFootprint(255, 255)), {
+    sizeX: 255,
+    sizeY: 255,
+});
+assert.throws(() => encodeLocPlacementFootprint(0, 1), /within 1\.\.255/);
+assert.throws(() => encodeLocPlacementFootprint(1, 0), /within 1\.\.255/);
+assert.throws(() => encodeLocPlacementFootprint(256, 1), /within 1\.\.255/);
+assert.throws(() => encodeLocPlacementFootprint(1, 256), /within 1\.\.255/);
+
 const wall = packLocPlacementMetadata(LocModelType.WALL, 2);
 assert.equal(getLocPlacementClassFlags(wall), LocPlacementClassFlag.WALL_PIECE);
 assert.equal(hasLocPlacementClass(wall, LocPlacementClassFlag.WALL_PIECE), true);
@@ -126,4 +143,4 @@ for (const type of [LocModelType.WALL_DIAGONAL, LocModelType.NORMAL, LocModelTyp
 
 assert.equal(getLocPlacementClassFlags(LOC_PLACEMENT_NONE), LocPlacementClassFlag.NONE);
 
-console.log("loc placement metadata round-trip, anchor, and classification checks passed");
+console.log("loc placement metadata round-trip, anchor, footprint, and classification checks passed");
