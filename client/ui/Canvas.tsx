@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
+import { installWebGPUNpcOpaqueComparison } from "../render/webgpu/npc/WebGPUNpcOpaqueComparison";
 import { installWebGPUPlayerAlphaComparison } from "../render/webgpu/player/WebGPUPlayerAlphaComparison";
 import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
 import { installWebGPUPlayerOpaqueComparison } from "../render/webgpu/player/WebGPUPlayerOpaqueComparison";
@@ -20,6 +21,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             return;
         }
         let active = true;
+        let restoreNpcComparison: (() => void) | undefined;
         let restorePlayerComparison: (() => void) | undefined;
         let restorePlayerCaptureBoundary: (() => void) | undefined;
         let restorePlayerAlphaComparison: (() => void) | undefined;
@@ -30,6 +32,9 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         renderer.initOnce().then(() => {
             if (!active) return;
             installWebGPUPlayerOpaquePassBoundaryGuard();
+            // Install NPC comparison before the player wrapper so the opaque
+            // actor order is static scene -> NPC -> player, matching WebGL2.
+            restoreNpcComparison = installWebGPUNpcOpaqueComparison(renderer);
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
             restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
             restorePlayerAlphaComparison = installWebGPUPlayerAlphaComparison(renderer);
@@ -48,6 +53,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             restorePlayerCaptureBoundary = undefined;
             restorePlayerComparison?.();
             restorePlayerComparison = undefined;
+            restoreNpcComparison?.();
+            restoreNpcComparison = undefined;
             renderer.stop();
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas?.parentNode === host) host.removeChild(comparisonCanvas);
