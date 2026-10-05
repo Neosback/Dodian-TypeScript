@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { DynamicActorInstance } from "../render/dynamic/DynamicActorRenderData";
+import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
 import {
     WEBGPU_PLAYER_INSTANCE_STRIDE_BYTES,
     getWebGPUPlayerOpaquePipelineVariant,
@@ -147,5 +148,29 @@ const sceneOverrideIndex = WEBGPU_PLAYER_OPAQUE_SHADER.indexOf(
 );
 assert.ok(actorOverrideIndex >= 0);
 assert.ok(sceneOverrideIndex > actorOverrideIndex);
+
+// The authoritative WebGL2 function can return before it clears its reusable
+// batch map. Comparison mode must clear that state at map entry so an empty map
+// cannot capture the preceding map's player batches.
+const previousWindow = (globalThis as any).window;
+(globalThis as any).window = { location: { search: "?webgpuTerrain=1" } };
+let guardedCalls = 0;
+const originalOpaque = function (this: any): void {
+    guardedCalls++;
+    assert.equal(this.batchGroups.size, 0);
+};
+const fakePlayerRenderer = {
+    batchGroups: new Map<string, unknown>([["stale-map", {}]]),
+    renderOpaqueForMap: originalOpaque,
+};
+const fakeRenderer = { playerRenderer: fakePlayerRenderer } as any;
+const restoreCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(fakeRenderer);
+fakePlayerRenderer.renderOpaqueForMap({} as any, 0, undefined as any);
+assert.equal(guardedCalls, 1);
+assert.equal(fakePlayerRenderer.batchGroups.size, 0);
+restoreCaptureBoundary();
+assert.equal(fakePlayerRenderer.renderOpaqueForMap, originalOpaque);
+if (previousWindow === undefined) delete (globalThis as any).window;
+else (globalThis as any).window = previousWindow;
 
 console.log("WebGPU opaque player foundation contract checks passed");
