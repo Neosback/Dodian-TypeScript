@@ -4,22 +4,20 @@ This note tracks the dedicated face-priority checkpoint from `WEBGPU_MIGRATION_C
 
 ## Ground truth
 
-The original software model renderer first walks visible faces from far to near. When a model has per-face priorities, that depth walk feeds twelve stable buckets (`0..11`). Priorities `0..9` are then emitted in numeric order, except for the special `10` then `11` stream:
+The software model painter walks visible faces from far to near and, when exact per-face priorities exist, feeds twelve stable buckets (`0..11`). Priorities `0..9` are emitted in numeric order with the special `10` then `11` stream interleaved at three thresholds:
 
-- Before priority `0`, emit special faces while their next depth is greater than the average depth of priorities `1` and `2`.
-- Before priority `3`, emit special faces while their next depth is greater than the average depth of priorities `3` and `4`.
-- Before priority `5`, emit special faces while their next depth is greater than the average depth of priorities `6` and `8`.
-- Emit any remaining priority `10` and `11` faces after priority `9`.
+- before priority `0`, while special depth is strictly greater than the average depth of priorities `1` and `2`;
+- before priority `3`, while special depth is strictly greater than the average depth of priorities `3` and `4`;
+- before priority `5`, while special depth is strictly greater than the average depth of priorities `6` and `8`;
+- after priority `9`, emit the remaining priority `10` faces and then priority `11` faces.
 
-The comparison is strictly `>`. Priority `10` is exhausted before the renderer switches to priority `11`; the two buckets are not merged by depth.
+Priority `10` is exhausted before priority `11`; those buckets are not merged by depth. `client/render/priority/FacePrioritySort.ts` is the renderer-neutral CPU oracle for these rules.
 
-`client/render/priority/FacePrioritySort.ts` is the renderer-neutral CPU reference for those rules. `client/tests/face-priority-sort.test.ts` covers the three thresholds, equal-depth stability, strict threshold equality, the `10 -> 11` handoff, invalid priorities, and the no-priority far-to-near path.
+The software painter's face depth is the integer average of the three camera-space relative-Z values, plus the model radius. The model radius is constant for every face in that model. Camera translation, map/placement translation, center-height offsets, and the radius therefore cancel from every model-local comparison and threshold. The WebGPU depth pass keeps only the terms that can change relative face depth.
 
 ## Packed-vertex limitation
 
-The existing 12-byte vertex format cannot represent exact priorities `0..11`.
-
-`VertexBuffer` compresses them into three bits stored in `packed.z[8:6]`:
+The existing 12-byte vertex ABI cannot represent exact priorities `0..11`. `VertexBuffer` compresses priority into three bits in `packed.z[8:6]`:
 
 - `0..3` remain `0..3`
 - `4..5 -> 4`
@@ -27,107 +25,148 @@ The existing 12-byte vertex format cannot represent exact priorities `0..11`.
 - `8..9 -> 6`
 - `10..11 -> 7`
 
-The rest of `packed.z` is already occupied by position, alpha, the texture-id high bit, and packed-U bits. Expanding priority in place would corrupt the existing vertex ABI and the WebGL2 fallback.
-
-The current WGSL depth nudge therefore remains a temporary compatibility path only. Exact priority sorting must not depend on those three compressed bits.
+The remaining packed bits are already used by position, alpha, texture data, and UV data. Exact priority data therefore stays in a sidecar and the WebGL2-compatible packed vertex ABI is unchanged.
 
 ## Exact-priority sidecar
 
-The renderer preserves exact priority data separately from the packed vertex ABI.
+`ExactFacePrioritySceneBuffer` records:
 
-- `ExactFacePrioritySceneBuffer` records one exact `uint8` priority for every emitted model triangle.
-- Priority is read from `model.faceRenderPriorities[face.index]` when a per-face array exists, otherwise from the model-wide `model.priority` value.
-- The sidecar is aligned directly to the source index stream: triangle priority `n` describes source indices `n * 3 .. n * 3 + 2`.
-- A parallel `Uint32Array` stores `[firstIndex, indexCount]` pairs for every emitted model submission.
-- Alignment is validated before WebGPU static-loc resources accept the geometry. The spans must cover the complete model-only source index stream exactly once, in emission order.
-- Ordinary loc geometry, animated loc frame geometry, independent door geometry, and authoritative ground-item geometry all use the same sidecar contract.
-- Worker map payloads transfer loc and door priority arrays explicitly. Ground items carry the arrays through their existing main-thread geometry snapshot.
-- Terrain and NPC scene buffers remain on the existing `SceneBuffer` path and are not forced into this model-only sidecar contract.
+- one exact `uint8` priority per emitted triangle;
+- `[firstIndex, indexCount]` model spans preserving the original model-local sort boundary.
 
-`client/tests/exact-face-priority-sidecar.test.ts` covers triangle alignment, model-span boundaries, model-wide priority fallback, invalid priorities, incomplete spans, and empty geometry.
+The spans cover the complete model-only index stream exactly once in emission order. Ordinary locs, animated loc frame geometry, doors, and ground items all use this contract.
 
 ## GPU sort-resource foundation
 
-`WebGPUFacePrioritySortResources` owns the GPU-side data needed by the sorter:
+`WebGPUFacePrioritySortResources` owns data that is invariant across placements:
 
-- exact priorities expanded to one `u32` storage word per triangle,
-- validated model-span metadata,
-- the original source-index stream,
-- a storage-plus-index sorted-index target,
-- a face-depth storage buffer.
+- exact priority words;
+- validated model spans;
+- the source index stream;
+- a storage-plus-index sorted-index target initialized as an exact source-index copy.
 
-The sorted-index target is initialized as an exact copy of the plain source-index stream. This makes the resource safe before compute sorting is activated.
-
-The draw-range resolver maps a draw to the exact contiguous model span or spans it covers. Draws that begin or end inside a model span are rejected so the compute path cannot accidentally sort multiple model submissions as one model.
-
-`WebGPUPlatform` exposes the compute-pipeline and compute-pass interfaces needed by the next stage.
+It no longer owns a `depth[sourceFace]` buffer. That original design was insufficient for animated locs because one source frame can be referenced by multiple placed instances and `ContourGroundType.VERTEX` can deform those instances differently.
 
 ## Live resource integration checkpoint
 
 Status: implemented.
 
-The sort-resource foundation is now attached to live static WebGPU model resources without changing rendered output.
+- `WebGPUStaticLocResources` creates sort resources for non-empty exact-priority geometry.
+- Doors and ground items inherit the same contract.
+- Opaque, alpha, full-detail, and LOD draws record a validated `facePrioritySpan`.
+- Animated frame changes refresh the span after their source range changes.
+- Hidden zero-count animation slots retain an empty span.
+- Static resources expose an explicit `plain` versus `priority` index source.
+- The source defaults to `plain`.
+- `drawWebGPUOrderedStaticGeometry` binds the selected source without replacing delayed-wall ordering.
 
-- `WebGPUStaticLocResources` creates `WebGPUFacePrioritySortResources` whenever non-empty exact-priority geometry is uploaded.
-- Because doors and ground items inherit the same static-loc resource contract, ordinary locs, doors, and ground items all receive the same priority buffers automatically.
-- Every opaque, alpha, full-detail, and LOD draw records its validated `facePrioritySpan` at resource creation.
-- Animated loc frame changes refresh the draw's `facePrioritySpan` after the authoritative WebGL animation state changes its index offset/count.
-- Hidden zero-count animation slots retain a valid empty span description and can be reactivated by a later frame.
-- Static resources now expose an explicit `plain` versus `priority` index-source switch.
-- The switch defaults to `plain`, so this checkpoint does not change rendered geometry.
-- `drawWebGPUOrderedStaticGeometry` binds the selected index source while leaving delayed-wall submission ordering unchanged.
-- The `priority` source resolves to `sortedIndexBuffer`; until compute sorting writes new data, that buffer is still the exact source-index copy.
-- Disposal releases the additional priority buffers together with the ordinary static geometry.
+## Camera-dependent face-depth checkpoint
 
-`client/tests/webgpu-animated-loc-draws.test.ts` now covers the plain/priority buffer switch, initial draw-span attachment, animated span refresh, hidden zero-count refresh, and preservation of placement/roof metadata.
+Status: compute foundation implemented; live scheduling intentionally remains disabled until the exact sorter is added.
+
+### Exact depth quantity
+
+For one submitted model, the ordering quantity is the integer average of the three camera-relative vertex depths. Terms that are constant for every vertex in that model are intentionally omitted because adding the same constant cannot change:
+
+- far-to-near ordering;
+- priority-bucket average thresholds;
+- the strict `>` threshold comparisons.
+
+The compute path therefore uses the linear part of the supplied view/world-entity transform with `w = 0`.
+
+### Instance-aware work stream
+
+A single `depth[sourceFace]` array is not exact for animated locs. Animated groups can reuse one frame span at more than one placement, while vertex contouring is evaluated from each placement's height-map coordinates.
+
+`WebGPUFacePriorityDepthCompute.ts` expands visible draws into a dense work stream of:
+
+`[sourceFace, firstInstance]`
+
+Source faces may appear more than once. Each model span also retains a CPU-side `WebGPUFacePriorityDepthModelJob` describing its contiguous range in the dense depth output. Checkpoint 3 can therefore sort each submitted model independently even when several placements share the same source geometry.
+
+The job builder rejects multi-instance draw calls for this path. Current loc-like scene construction uses one placed-model instance per draw or one synthetic instance for geometry whose placement is already baked into the vertices. If that invariant changes later, the scheduler must expand those instances explicitly instead of sharing one sort result.
+
+### Packed geometry and contouring
+
+The WGSL compute shader reads the existing packed vertex stream as raw `array<u32>` words. This is deliberate: a storage `vec3<u32>` would have 16-byte alignment and would not match the 12-byte vertex ABI.
+
+The shader decodes position exactly like the static-scene vertex shader. Placement/map/camera translations and center-tile height are omitted as model-wide constants. `ContourGroundType.VERTEX` is different: its interpolated height can vary per vertex and can change relative face depth. The compute shader therefore mirrors the live `getLocHeightInterp` path using:
+
+- the pass's height-map texture;
+- the pass's model-info buffer;
+- each work item's `firstInstance`;
+- the map border size.
+
+This is why depth scratch is pass-specific rather than geometry-global.
+
+### Compute resources
+
+`WebGPUFacePriorityDepthComputeResources` owns:
+
+- a storage copy of the existing packed 12-byte vertex words;
+- an instance-aware work-item buffer;
+- dense face-depth scratch sized by submitted face references;
+- a uniform block for the depth transform, work-item count, and border size;
+- a compute bind group using the existing source-index buffer, height map, and model-info buffer.
+
+The WGSL workgroup size is 64. The output is dense by work-item index, not source-face index.
+
+The compute resource is not yet created or dispatched by `WebGPUStaticSceneRenderer`. This is intentional. The next checkpoint needs to consume the dense per-model job ranges and write matching per-submission sorted index regions before switching any draw to the `priority` index source.
+
+### Validation coverage
+
+`client/tests/webgpu-face-priority-depth.test.ts` covers:
+
+- 12-byte packed-position decoding;
+- integer/truncating face-depth averaging;
+- linear camera transform behavior;
+- translation invariance from `w = 0`;
+- duplicate source faces at different `firstInstance` values;
+- hidden zero-count draws;
+- model-job boundaries retained for the sorter;
+- rejection of unsupported multi-instance draw calls;
+- shader contracts for raw packed words, vertex contouring, dense work items, and truncating depth writes;
+- compute resource creation, job/uniform uploads, dispatch sizing, capacity checks, and disposal through a mock WebGPU device.
+
+The existing WebGPU foundation suite has not been claimed as remotely executed unless GitHub reports a check for the branch head.
 
 ## Composition with delayed-wall ordering
 
-Face ordering and delayed-wall ordering operate at different levels and remain separate:
+Delayed-wall ordering and face-priority ordering remain separate:
 
-- `WebGPUStaticLocDrawOrdering` orders whole static-model submissions relative to neighboring locs/walls.
-- Face-priority sorting changes triangle/index order inside one submitted model draw.
+- `WebGPUStaticLocDrawOrdering` schedules whole loc-like draws relative to neighboring walls/locs.
+- face-priority sorting reorders triangle indices inside each submitted model.
 
-A model draw therefore receives its selected index source and still participates in the existing delayed-wall scheduler. The face sorter must not replace or bypass type-1/type-3 delayed-wall ordering.
+The exact sorter must preserve that separation.
 
-## Next implementation checkpoint: camera-dependent face depth
+## Next implementation checkpoint: exact 0..11 GPU sort
 
-The next checkpoint is intentionally limited to depth generation. It should not activate sorted rendering yet.
+The next checkpoint will consume the instance-aware depth work stream and implement the exact CPU-oracle behavior:
 
-1. Define the exact renderer-neutral face-depth quantity required by the software painter reference.
-2. Compute that depth from packed vertex positions plus the same placed-model/world transform already used by static loc rendering.
-3. Add a WGSL compute pipeline that writes one depth value per face into `faceDepthBuffer`.
-4. Dispatch only the model spans required by visible draws instead of treating a merged map buffer as one model.
-5. Validate GPU-generated depth data against CPU fixtures covering camera translation, model placement, planes, world-entity transforms, and animated frame ranges.
-6. Keep the live index source on `plain` for the entire checkpoint.
+1. create per-model sort jobs from `WebGPUFacePriorityDepthModelJob` ranges;
+2. build the twelve stable priority buckets;
+3. preserve far-to-near stability within each bucket;
+4. reproduce the three average-depth thresholds;
+5. preserve strict `>` comparisons;
+6. exhaust priority `10` before priority `11`;
+7. write each model's reordered source indices into a draw-addressable sorted-index region;
+8. support duplicate animated source spans by giving separate placed submissions separate output regions;
+9. compare GPU/CPU index order against `createFacePriorityDrawOrder` fixtures;
+10. keep the renderer on `plain` until those comparisons agree.
 
-After depth generation is proven, the following checkpoint will implement the exact 0..11 bucket/threshold sort and write `sortedIndexBuffer`.
-
-## Remaining sorter work
-
-After the depth checkpoint:
-
-1. Implement the 12 stable priority buckets per model.
-2. Reproduce the three average-depth thresholds exactly.
-3. Preserve the strict `>` comparison.
-4. Exhaust priority `10` before priority `11` rather than merging them by depth.
-5. Write each model's reordered triangles into its original portion of `sortedIndexBuffer`.
-6. Compare GPU output against `createFacePriorityDrawOrder` fixtures.
-7. Activate `priority` index selection in the A/B WebGPU renderer only after CPU/GPU agreement is demonstrated.
-8. Retain a minimal coplanar depth bias only where required after the painter order itself is correct.
+Only after that checkpoint should the A/B static renderer activate `priority` index selection.
 
 ## Completion criteria
 
 The overall face-priority migration is complete only when:
 
-- exact `0..11` priorities survive scene construction without compression,
-- live loc/door/ground-item draws have exact model-span mappings,
-- animated draws refresh those mappings correctly,
-- CPU and GPU depth/sort output agree for validation fixtures,
-- priority `10/11` threshold behavior matches the CPU reference,
-- opaque/alpha and full-detail/LOD loc paths select the correct sorted index source,
-- delayed-wall ordering still operates on the resulting whole-model draws,
-- the temporary three-bit face-priority depth nudge is no longer responsible for painter correctness,
+- exact `0..11` priorities survive scene construction without compression;
+- loc/door/ground-item draws have exact model-span mappings;
+- animated ranges refresh those mappings correctly;
+- instance-specific vertex contouring can produce independent depth jobs for shared source geometry;
+- CPU and GPU depth/sort behavior agree on validation fixtures;
+- priority `10/11` threshold behavior matches the CPU reference;
+- opaque/alpha and full-detail/LOD paths select their correct sorted index regions;
+- delayed-wall ordering still operates on whole-model submissions;
+- the temporary three-bit face-priority depth nudge is no longer responsible for painter correctness;
 - WebGL2 fallback data remains unchanged.
-
-The exact-priority data path, GPU sort-resource foundation, live static-resource integration, draw-span mapping, animated refresh, and inactive index-source switch are implemented. Camera-dependent depth compute, exact GPU sorting, and render-path activation remain pending.
