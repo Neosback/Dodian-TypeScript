@@ -179,3 +179,42 @@ export function getLocDelayedWallRule(
         oppositeLocSpan: 0,
     };
 }
+
+export type LocTileFootprint = {
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+};
+
+/**
+ * Recreate the four-bit per-tile span mask attached to a multi-tile loc by the
+ * software scene. The bits describe which other covered tiles continue away
+ * from the queried tile: west=1, north=2, east=4, south=8 in the original
+ * painter's tile-edge convention.
+ *
+ * Delayed-wall release needs this mask at the wall's anchor tile. Therefore an
+ * exact footprint (or equivalently anchor + sizeX/sizeY) is the minimum extra
+ * data required beyond the placement anchor already carried by trailer v2.
+ */
+export function getLocFootprintSpanMaskAtTile(
+    footprint: LocTileFootprint,
+    tileX: number,
+    tileY: number,
+): number {
+    if (
+        tileX < footprint.startX ||
+        tileX > footprint.endX ||
+        tileY < footprint.startY ||
+        tileY > footprint.endY
+    ) {
+        return 0;
+    }
+
+    let mask = 0;
+    if (tileX > footprint.startX) mask |= 1;
+    if (tileY < footprint.endY) mask |= 2;
+    if (tileX < footprint.endX) mask |= 4;
+    if (tileY > footprint.startY) mask |= 8;
+    return mask;
+}
