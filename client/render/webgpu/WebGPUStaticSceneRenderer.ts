@@ -23,6 +23,7 @@ import {
 import { WebGPUSceneUniformBuffer } from "./WebGPUSceneUniforms";
 import { WebGPUWaterResources } from "./terrain/WebGPUWaterResources";
 import { WebGPUStaticDoorResources } from "./loc/WebGPUStaticDoorResources";
+import { drawWebGPUOrderedStaticGeometry } from "./loc/WebGPUStaticLocDrawOrdering";
 import { WebGPUStaticGroundItemResources } from "./ground/WebGPUStaticGroundItemResources";
 import {
     type WebGPUStaticLocPassResources,
@@ -779,32 +780,13 @@ export class WebGPUStaticSceneRenderer {
             }
 
             const locs = this.locsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                locs,
-                locs?.getPass(false, lod),
-                locPipeline,
-            );
             const groundItems = this.groundItemsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                groundItems,
-                groundItems?.getPass(false, lod),
-                locPipeline,
-            );
             const doors = this.doorsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                doors,
-                doors?.getPass(false, lod),
-                locPipeline,
-            );
+            drawWebGPUOrderedStaticGeometry(pass, frame, map, locPipeline, [
+                { resources: locs, staticPass: locs?.getPass(false, lod) },
+                { resources: groundItems, staticPass: groundItems?.getPass(false, lod) },
+                { resources: doors, staticPass: doors?.getPass(false, lod) },
+            ]);
         }
     }
 
@@ -842,32 +824,13 @@ export class WebGPUStaticSceneRenderer {
             }
 
             const locs = this.locsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                locs,
-                locs?.getPass(true, lod),
-                locPipeline,
-            );
             const groundItems = this.groundItemsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                groundItems,
-                groundItems?.getPass(true, lod),
-                locPipeline,
-            );
             const doors = this.doorsById.get(id);
-            this.drawStaticGeometry(
-                pass,
-                frame,
-                map,
-                doors,
-                doors?.getPass(true, lod),
-                locPipeline,
-            );
+            drawWebGPUOrderedStaticGeometry(pass, frame, map, locPipeline, [
+                { resources: locs, staticPass: locs?.getPass(true, lod) },
+                { resources: groundItems, staticPass: groundItems?.getPass(true, lod) },
+                { resources: doors, staticPass: doors?.getPass(true, lod) },
+            ]);
         }
     }
 
