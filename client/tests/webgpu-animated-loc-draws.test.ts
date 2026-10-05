@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 
+import type { WebGPUBufferLike } from "../render/backend/WebGPUPlatform";
+import type { WebGPUFacePrioritySortResources } from "../render/webgpu/loc/WebGPUFacePrioritySortResources";
 import {
     applyWebGPUAnimatedLocDrawRanges,
+    refreshWebGPUStaticLocFacePrioritySpans,
+    resolveWebGPUStaticLocIndexBuffer,
     type WebGPUAnimatedLocState,
     type WebGPUStaticLocDrawPlanEntry,
     type WebGPUStaticLocPassResources,
@@ -19,6 +23,48 @@ function makePass(draw: WebGPUStaticLocDrawPlanEntry): WebGPUStaticLocPassResour
     };
 }
 
+const plainIndexBuffer = { label: "plain" } as WebGPUBufferLike;
+const sortedIndexBuffer = { label: "priority" } as WebGPUBufferLike;
+const prioritySort = {
+    sortedIndexBuffer,
+    resolveDraw(draw: { firstIndex: number; indexCount: number }) {
+        if (draw.firstIndex < 0 || draw.indexCount < 0 || draw.firstIndex % 3 !== 0 || draw.indexCount % 3 !== 0) {
+            throw new Error("triangle-aligned");
+        }
+        return {
+            firstSpan: draw.indexCount === 0 ? 0 : draw.firstIndex / 3,
+            spanCount: draw.indexCount === 0 ? 0 : 1,
+            firstFace: draw.firstIndex / 3,
+            faceCount: draw.indexCount / 3,
+        };
+    },
+} as unknown as WebGPUFacePrioritySortResources;
+
+assert.equal(resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, prioritySort, "plain"), plainIndexBuffer);
+assert.equal(
+    resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, prioritySort, "priority"),
+    sortedIndexBuffer,
+);
+assert.throws(
+    () => resolveWebGPUStaticLocIndexBuffer(plainIndexBuffer, undefined, "priority"),
+    /without face-priority sort resources/,
+);
+
+const initialPriorityDraw: WebGPUStaticLocDrawPlanEntry = {
+    firstIndex: 3,
+    indexCount: 6,
+    instanceCount: 1,
+    firstInstance: 0,
+    plane: 0,
+};
+assert.equal(refreshWebGPUStaticLocFacePrioritySpans([initialPriorityDraw], prioritySort), 1);
+assert.deepEqual(initialPriorityDraw.facePrioritySpan, {
+    firstSpan: 1,
+    spanCount: 1,
+    firstFace: 1,
+    faceCount: 2,
+});
+
 const opaqueDraw: WebGPUStaticLocDrawPlanEntry = {
     firstIndex: 0,
     indexCount: 3,
@@ -29,7 +75,7 @@ const opaqueDraw: WebGPUStaticLocDrawPlanEntry = {
 const opaquePass = makePass(opaqueDraw);
 
 const alphaDraw: WebGPUStaticLocDrawPlanEntry = {
-    firstIndex: 2,
+    firstIndex: 3,
     indexCount: 3,
     instanceCount: 1,
     firstInstance: 9,
@@ -42,11 +88,11 @@ const loc: WebGPUAnimatedLocState = {
     anim: {
         frames: [
             [0, 3, 1],
-            [16, 6, 2],
+            [24, 6, 2],
         ],
         framesAlpha: [
-            [8, 3, 1],
-            [24, 9, 1],
+            [12, 3, 1],
+            [36, 9, 1],
         ],
     },
     getDrawRangeIndex(isAlpha, _isInteract, _isLod) {
@@ -54,22 +100,40 @@ const loc: WebGPUAnimatedLocState = {
     },
 };
 
-assert.equal(applyWebGPUAnimatedLocDrawRanges(opaquePass, [loc], false, false), 1);
+assert.equal(
+    applyWebGPUAnimatedLocDrawRanges(opaquePass, [loc], false, false, prioritySort),
+    1,
+);
 assert.deepEqual(opaqueDraw, {
-    firstIndex: 4,
+    firstIndex: 6,
     indexCount: 6,
     instanceCount: 2,
     firstInstance: 7,
     plane: 2,
+    facePrioritySpan: {
+        firstSpan: 2,
+        spanCount: 1,
+        firstFace: 2,
+        faceCount: 2,
+    },
 });
 
-assert.equal(applyWebGPUAnimatedLocDrawRanges(alphaPass, [loc], true, false), 1);
+assert.equal(
+    applyWebGPUAnimatedLocDrawRanges(alphaPass, [loc], true, false, prioritySort),
+    1,
+);
 assert.deepEqual(alphaDraw, {
-    firstIndex: 6,
+    firstIndex: 9,
     indexCount: 9,
     instanceCount: 1,
     firstInstance: 9,
     plane: 1,
+    facePrioritySpan: {
+        firstSpan: 3,
+        spanCount: 1,
+        firstFace: 3,
+        faceCount: 3,
+    },
 });
 
 const missingIndexLoc: WebGPUAnimatedLocState = {
@@ -79,7 +143,7 @@ const missingIndexLoc: WebGPUAnimatedLocState = {
     },
 };
 assert.equal(
-    applyWebGPUAnimatedLocDrawRanges(opaquePass, [missingIndexLoc], false, false),
+    applyWebGPUAnimatedLocDrawRanges(opaquePass, [missingIndexLoc], false, false, prioritySort),
     0,
 );
 
@@ -91,22 +155,31 @@ const unalignedLoc: WebGPUAnimatedLocState = {
     },
 };
 assert.throws(
-    () => applyWebGPUAnimatedLocDrawRanges(opaquePass, [unalignedLoc], false, false),
+    () => applyWebGPUAnimatedLocDrawRanges(opaquePass, [unalignedLoc], false, false, prioritySort),
     /4-byte aligned/,
 );
 
 const hiddenLoc: WebGPUAnimatedLocState = {
     frame: 0,
-    anim: { frames: [[32, 0, 0]] },
+    anim: { frames: [[36, 0, 0]] },
     getDrawRangeIndex() {
         return 0;
     },
 };
-assert.equal(applyWebGPUAnimatedLocDrawRanges(opaquePass, [hiddenLoc], false, false), 1);
-assert.equal(opaqueDraw.firstIndex, 8);
+assert.equal(
+    applyWebGPUAnimatedLocDrawRanges(opaquePass, [hiddenLoc], false, false, prioritySort),
+    1,
+);
+assert.equal(opaqueDraw.firstIndex, 9);
 assert.equal(opaqueDraw.indexCount, 0);
 assert.equal(opaqueDraw.instanceCount, 0);
 assert.equal(opaqueDraw.firstInstance, 7, "animation must not alter model placement");
 assert.equal(opaqueDraw.plane, 2, "animation must not alter roof-plane metadata");
+assert.deepEqual(opaqueDraw.facePrioritySpan, {
+    firstSpan: 0,
+    spanCount: 0,
+    firstFace: 3,
+    faceCount: 0,
+});
 
-console.log("webgpu animated loc draw-range checks passed");
+console.log("webgpu animated loc draw-range and face-priority integration checks passed");

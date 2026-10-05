@@ -23,6 +23,11 @@ import {
     type WebGPUDeviceLike,
 } from "../../backend/WebGPUPlatform";
 import {
+    type WebGPUFacePriorityDrawSpanRange,
+    type WebGPUFacePriorityIndexSource,
+    WebGPUFacePrioritySortResources,
+} from "./WebGPUFacePrioritySortResources";
+import {
     WEBGPU_HEIGHT_MAP_LAYERS,
     WebGPUHeightMapResources,
 } from "./WebGPUHeightMapResources";
@@ -33,6 +38,8 @@ export interface WebGPUStaticLocDrawPlanEntry {
     instanceCount: number;
     firstInstance: number;
     plane: number;
+    /** Exact model-span coverage used by the WebGPU face-priority compute pass. */
+    facePrioritySpan?: WebGPUFacePriorityDrawSpanRange;
 }
 
 export interface WebGPUStaticLocPlan {
@@ -114,6 +121,49 @@ function createUploadedBuffer(
     return buffer;
 }
 
+export function resolveWebGPUStaticLocIndexBuffer(
+    plainIndexBuffer: WebGPUBufferLike,
+    sortResources: WebGPUFacePrioritySortResources | undefined,
+    source: WebGPUFacePriorityIndexSource,
+): WebGPUBufferLike {
+    if (source === "plain") {
+        return plainIndexBuffer;
+    }
+    if (!sortResources) {
+        throw new Error("Priority index source requested without face-priority sort resources");
+    }
+    return sortResources.sortedIndexBuffer;
+}
+
+export function refreshWebGPUStaticLocFacePrioritySpan(
+    draw: WebGPUStaticLocDrawPlanEntry,
+    sortResources: WebGPUFacePrioritySortResources | undefined,
+): WebGPUFacePriorityDrawSpanRange | undefined {
+    if (!sortResources) {
+        draw.facePrioritySpan = undefined;
+        return undefined;
+    }
+    const span = sortResources.resolveDraw(draw);
+    draw.facePrioritySpan = span;
+    return span;
+}
+
+export function refreshWebGPUStaticLocFacePrioritySpans(
+    draws: readonly WebGPUStaticLocDrawPlanEntry[],
+    sortResources: WebGPUFacePrioritySortResources | undefined,
+): number {
+    if (!sortResources) {
+        for (const draw of draws) {
+            draw.facePrioritySpan = undefined;
+        }
+        return 0;
+    }
+    for (const draw of draws) {
+        refreshWebGPUStaticLocFacePrioritySpan(draw, sortResources);
+    }
+    return draws.length;
+}
+
 type PlacementTrailerData = {
     metadata: Uint32Array;
     footprints: Uint16Array;
@@ -151,7 +201,11 @@ function readPlacementMetadataTrailer(
         );
     }
 
-    const wordsPerInstance = isLegacyVersion ? 1 : isAnchorVersion ? 2 : LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
+    const wordsPerInstance = isLegacyVersion
+        ? 1
+        : isAnchorVersion
+          ? 2
+          : LOC_PLACEMENT_TRAILER_WORDS_PER_INSTANCE;
     const metadataEnd = headerEnd + encodedInstanceCount * wordsPerInstance;
     if (modelData.length < metadataEnd) {
         throw new Error(
@@ -282,6 +336,7 @@ function createPassResources(
     modelTextureData: Uint16Array,
     drawRanges: readonly DrawRange[],
     drawRangesPlanes: Uint8Array,
+    facePrioritySortResources: WebGPUFacePrioritySortResources | undefined,
 ): WebGPUStaticLocPassResources | undefined {
     const plan = createWebGPUStaticLocPlanFromData(
         modelTextureData,
@@ -311,6 +366,7 @@ function createPassResources(
     for (let i = 0; i < plan.draws.length; i++) {
         drawsBySourceIndex[plan.sourceIndices[i]] = plan.draws[i];
     }
+    refreshWebGPUStaticLocFacePrioritySpans(plan.draws, facePrioritySortResources);
 
     return {
         modelInfoBuffer,
@@ -328,6 +384,7 @@ export function applyWebGPUAnimatedLocDrawRanges(
     locsAnimated: readonly WebGPUAnimatedLocState[],
     transparent: boolean,
     lod: boolean,
+    facePrioritySortResources?: WebGPUFacePrioritySortResources,
 ): number {
     if (!pass || locsAnimated.length === 0) {
         return 0;
@@ -362,6 +419,7 @@ export function applyWebGPUAnimatedLocDrawRanges(
         draw.firstIndex = byteOffset >>> 2;
         draw.indexCount = Math.max(0, frame[1] | 0);
         draw.instanceCount = Math.max(0, frame[2] | 0);
+        refreshWebGPUStaticLocFacePrioritySpan(draw, facePrioritySortResources);
         updated++;
     }
     return updated;
@@ -382,8 +440,20 @@ export function syncWebGPUAnimatedLocsForMap(
         return 0;
     }
     return (
-        applyWebGPUAnimatedLocDrawRanges(resources.getPass(false, lod), locsAnimated, false, lod) +
-        applyWebGPUAnimatedLocDrawRanges(resources.getPass(true, lod), locsAnimated, true, lod)
+        applyWebGPUAnimatedLocDrawRanges(
+            resources.getPass(false, lod),
+            locsAnimated,
+            false,
+            lod,
+            resources.facePrioritySortResources,
+        ) +
+        applyWebGPUAnimatedLocDrawRanges(
+            resources.getPass(true, lod),
+            locsAnimated,
+            true,
+            lod,
+            resources.facePrioritySortResources,
+        )
     );
 }
 
@@ -391,10 +461,12 @@ export class WebGPUStaticLocResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
     readonly heightMap: WebGPUHeightMapResources;
-    /** Exact uncompressed 0..11 priority for each source triangle. CPU-only until the sort checkpoint. */
+    /** Exact uncompressed 0..11 priority for each source triangle. */
     readonly facePriorities: Uint8Array;
     /** `[firstIndex, indexCount]` pairs preserving model-local sort boundaries. */
     readonly facePriorityModelSpans: Uint32Array;
+    /** GPU-side source/depth/sorted-index resources, still inactive until compute sorting is enabled. */
+    readonly facePrioritySortResources?: WebGPUFacePrioritySortResources;
     readonly opaque?: WebGPUStaticLocPassResources;
     readonly alpha?: WebGPUStaticLocPassResources;
     readonly lod?: WebGPUStaticLocPassResources;
@@ -402,6 +474,7 @@ export class WebGPUStaticLocResources {
 
     private readonly registryDevice?: WebGPUDeviceLike;
     private readonly registryMapId?: number;
+    private facePriorityIndexSource: WebGPUFacePriorityIndexSource = "plain";
 
     constructor(
         device: WebGPUDeviceLike,
@@ -437,6 +510,15 @@ export class WebGPUStaticLocResources {
                 geometry.indices.byteLength,
             ),
         );
+        if (geometry.indices.length > 0) {
+            this.facePrioritySortResources = new WebGPUFacePrioritySortResources(
+                device,
+                `loc-${mapX}-${mapY}`,
+                geometry.indices,
+                geometry.facePriorities,
+                geometry.facePriorityModelSpans,
+            );
+        }
         this.heightMap = new WebGPUHeightMapResources(
             device,
             heightMapSize,
@@ -459,6 +541,7 @@ export class WebGPUStaticLocResources {
             geometry.modelTextureData,
             geometry.drawRanges,
             geometry.drawRangesPlanes,
+            this.facePrioritySortResources,
         );
         this.alpha = createPassResources(
             device,
@@ -470,6 +553,7 @@ export class WebGPUStaticLocResources {
             geometry.modelTextureDataAlpha,
             geometry.drawRangesAlpha,
             geometry.drawRangesAlphaPlanes,
+            this.facePrioritySortResources,
         );
         this.lod = createPassResources(
             device,
@@ -481,6 +565,7 @@ export class WebGPUStaticLocResources {
             geometry.modelTextureDataLod,
             geometry.drawRangesLod,
             geometry.drawRangesLodPlanes,
+            this.facePrioritySortResources,
         );
         this.lodAlpha = createPassResources(
             device,
@@ -492,6 +577,7 @@ export class WebGPUStaticLocResources {
             geometry.modelTextureDataLodAlpha,
             geometry.drawRangesLodAlpha,
             geometry.drawRangesLodAlphaPlanes,
+            this.facePrioritySortResources,
         );
 
         if (registerForAnimation) {
@@ -520,6 +606,25 @@ export class WebGPUStaticLocResources {
         return this.opaque.bindGroup;
     }
 
+    get activeIndexBuffer(): WebGPUBufferLike {
+        return resolveWebGPUStaticLocIndexBuffer(
+            this.indexBuffer,
+            this.facePrioritySortResources,
+            this.facePriorityIndexSource,
+        );
+    }
+
+    getFacePriorityIndexSource(): WebGPUFacePriorityIndexSource {
+        return this.facePriorityIndexSource;
+    }
+
+    setFacePriorityIndexSource(source: WebGPUFacePriorityIndexSource): void {
+        if (source === "priority" && !this.facePrioritySortResources) {
+            throw new Error("Cannot enable priority index source without face-priority sort resources");
+        }
+        this.facePriorityIndexSource = source;
+    }
+
     getPass(transparent: boolean, lod: boolean): WebGPUStaticLocPassResources | undefined {
         if (lod) {
             return transparent ? this.lodAlpha : this.lod;
@@ -536,6 +641,7 @@ export class WebGPUStaticLocResources {
         }
         this.vertexBuffer.destroy?.();
         this.indexBuffer.destroy?.();
+        this.facePrioritySortResources?.dispose();
         for (const pass of [this.opaque, this.alpha, this.lod, this.lodAlpha]) {
             pass?.modelInfoBuffer.destroy?.();
             if (pass) {

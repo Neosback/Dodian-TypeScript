@@ -22,6 +22,8 @@ import type {
 export interface WebGPUOrderedStaticGeometryResources {
     readonly vertexBuffer: WebGPUBufferLike;
     readonly indexBuffer: WebGPUBufferLike;
+    /** Priority-aware resources expose the selected index source through this getter. */
+    readonly activeIndexBuffer?: WebGPUBufferLike;
 }
 
 export type WebGPUOrderedStaticDrawSource = {
@@ -117,7 +119,10 @@ export function drawWebGPUOrderedStaticGeometry(
             activeSourceIndex = submission.sourceIndex;
             pass.setBindGroup(4, submission.staticPass.bindGroup);
             pass.setVertexBuffer(0, submission.resources.vertexBuffer);
-            pass.setIndexBuffer(submission.resources.indexBuffer, "uint32");
+            pass.setIndexBuffer(
+                submission.resources.activeIndexBuffer ?? submission.resources.indexBuffer,
+                "uint32",
+            );
         }
         pass.drawIndexed(
             draw.indexCount,
