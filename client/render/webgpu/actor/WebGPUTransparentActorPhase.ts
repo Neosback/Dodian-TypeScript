@@ -119,6 +119,23 @@ export function registerWebGPUTransparentActorPhase(
     patchStaticRendererPrototype();
 }
 
+/**
+ * Replay one registered transparent actor phase into a caller-supplied pass.
+ *
+ * Comparison-only replays do not update the normal-frame diagnostics counters.
+ */
+export function replayWebGPUTransparentActorPhase(
+    id: string,
+    renderer: WebGPUStaticSceneRenderer,
+    pass: WebGPURenderPassEncoderLike,
+    frame: SceneFrameDescription,
+): boolean {
+    const handler = handlers.get(id);
+    if (!handler) return false;
+    handler.draw(renderer, pass, frame);
+    return true;
+}
+
 export function getWebGPUTransparentActorPhaseOrderForTests(): string[] {
     return sortedHandlers().map((handler) => handler.id);
 }
