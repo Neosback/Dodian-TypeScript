@@ -34,3 +34,37 @@ export function clampWebGPUViewport(
         height: clippedHeight,
     };
 }
+
+/**
+ * Scissor coordinates are integer pixel bounds even though WebGPU viewports may
+ * use floating-point coordinates. Round outward so the scissor never clips a
+ * valid viewport pixel, then clamp once more to the render target.
+ */
+export function getWebGPUScissorRect(
+    viewport: RenderViewportRect,
+    targetWidth: number,
+    targetHeight: number,
+): RenderViewportRect | undefined {
+    const clipped = clampWebGPUViewport(viewport, targetWidth, targetHeight);
+    if (!clipped) {
+        return undefined;
+    }
+
+    const width = Math.max(0, targetWidth | 0);
+    const height = Math.max(0, targetHeight | 0);
+    const left = Math.max(0, Math.min(width, Math.floor(clipped.x)));
+    const top = Math.max(0, Math.min(height, Math.floor(clipped.y)));
+    const right = Math.max(left, Math.min(width, Math.ceil(clipped.x + clipped.width)));
+    const bottom = Math.max(top, Math.min(height, Math.ceil(clipped.y + clipped.height)));
+
+    if (right <= left || bottom <= top) {
+        return undefined;
+    }
+
+    return {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    };
+}
