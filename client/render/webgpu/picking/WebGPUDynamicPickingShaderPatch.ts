@@ -1,6 +1,8 @@
 import type { DynamicActorKind } from "../../dynamic/DynamicActorRenderData";
 import { encodeWebGPUDynamicPickKind } from "./WebGPUDynamicPicking";
 
+export const WEBGPU_COMBINED_DYNAMIC_PICK_TAG = 0x80000000;
+
 interface DynamicActorShaderNames {
     outputType: "PlayerVertexOutput" | "NpcVertexOutput";
     vertexEntry: "vsPlayerOpaque" | "vsNpcOpaque";
@@ -17,7 +19,7 @@ function shaderNames(kind: DynamicActorKind): DynamicActorShaderNames {
  * shader module while preserving its already-audited vertex transform path.
  *
  * The ordinary color fragments remain untouched. The resulting module is used
- * only by an on-demand actor pick pass in a later checkpoint.
+ * only by an on-demand actor pick pass.
  */
 export function patchWebGPUDynamicActorShaderForPicking(
     code: string,
@@ -100,4 +102,30 @@ fn fsDynamicPick(input: ${names.outputType}) -> @location(0) vec4<u32> {
         throw new Error(`Failed to inject WebGPU ${kind} pick fragment`);
     }
     return patched;
+}
+
+/**
+ * Derive the M3 combined-pass variant from the M1/M2 dynamic picking shader.
+ * Static pick word 2 contains InteractType values 0..3, so dynamic picks set
+ * the high bit of that word to create a collision-free namespace while keeping
+ * the underlying player/NPC kind code intact in the low bits.
+ */
+export function patchWebGPUDynamicActorShaderForCombinedPicking(
+    code: string,
+    kind: DynamicActorKind,
+): string {
+    const kindCode = encodeWebGPUDynamicPickKind(kind);
+    const patched = patchWebGPUDynamicActorShaderForPicking(code, kind);
+    const untaggedKind = `        ${kindCode}u,\n        1u,`;
+    const taggedKind = `        (0x80000000u | ${kindCode}u),\n        1u,`;
+    if (!patched.includes(untaggedKind)) {
+        throw new Error(`WebGPU ${kind} dynamic pick payload contract changed`);
+    }
+    const combined = patched
+        .replace(untaggedKind, taggedKind)
+        .replace("fn fsDynamicPick(", "fn fsDynamicCombinedPick(");
+    if (!combined.includes("fn fsDynamicCombinedPick")) {
+        throw new Error(`Failed to create WebGPU ${kind} combined pick fragment`);
+    }
+    return combined;
 }
