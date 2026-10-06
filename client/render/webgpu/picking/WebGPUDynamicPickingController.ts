@@ -12,6 +12,7 @@ import {
     type WebGPUDeviceLike,
     type WebGPURenderPassEncoderLike,
     type WebGPURenderPipelineLike,
+    type WebGPUShaderModuleLike,
     type WebGPUTextureLike,
 } from "../../backend/WebGPUPlatform";
 import { WebGPUSceneUniformBuffer } from "../WebGPUSceneUniforms";
@@ -46,6 +47,7 @@ type DynamicPickRequest = {
     frame: SceneFrameDescription;
     x: number;
     y: number;
+    resolutionSnapshot: DynamicPickResolutionSnapshot;
     resolve: (result: WebGPUDynamicResolvedPickResult | undefined) => void;
     reject: (error: unknown) => void;
 };
@@ -55,7 +57,7 @@ type ActorIdentity = {
     serverId: number;
 };
 
-type DynamicPickResolutionSnapshot = {
+export type DynamicPickResolutionSnapshot = {
     players: Map<string, ActorIdentity>;
     npcs: Map<number, ActorIdentity>;
 };
@@ -63,10 +65,6 @@ type DynamicPickResolutionSnapshot = {
 export interface WebGPUDynamicResolvedPickResult extends WebGPUDynamicPickResult {
     actorId: number;
     serverId: number;
-}
-
-function mapKey(mapX: number, mapY: number): number {
-    return (((mapX | 0) & 0xffff) << 16) | ((mapY | 0) & 0xffff);
 }
 
 function playerResolutionKey(mapId: number, interactionId: number): string {
@@ -255,11 +253,13 @@ export class WebGPUDynamicPickingController {
         if (this.disposed || !isPointInsideSceneViewport(frame, canvasX, canvasY)) {
             return Promise.resolve(undefined);
         }
+        const resolutionSnapshot = captureResolutionSnapshot(this.host);
         return new Promise((resolve, reject) => {
             const request: DynamicPickRequest = {
                 frame,
                 x: canvasX | 0,
                 y: canvasY | 0,
+                resolutionSnapshot,
                 resolve,
                 reject,
             };
@@ -346,7 +346,7 @@ export class WebGPUDynamicPickingController {
         ];
         const createPipeline = (
             label: string,
-            module: any,
+            module: WebGPUShaderModuleLike,
             vertexEntryPoint: "vsPlayerOpaque" | "vsNpcOpaque",
             cullMode: "back" | "none",
         ): WebGPURenderPipelineLike =>
@@ -541,7 +541,6 @@ export class WebGPUDynamicPickingController {
         const depthTexture = this.depthTexture;
         if (!pickTexture || !depthTexture) return undefined;
 
-        const resolutionSnapshot = captureResolutionSnapshot(this.host);
         sceneUniforms.update(request.frame);
         const encoder = device.createCommandEncoder({ label: "dynamic-pick-encoder" });
         const copyTextureToBuffer = encoder.copyTextureToBuffer;
@@ -594,7 +593,9 @@ export class WebGPUDynamicPickingController {
             const mapped = readback.getMappedRange(0, WEBGPU_DYNAMIC_PICK_BYTES_PER_PIXEL);
             const words = new Uint32Array(mapped.slice(0, WEBGPU_DYNAMIC_PICK_BYTES_PER_PIXEL));
             const pick = decodeWebGPUDynamicPickWords(words);
-            return pick ? resolveWebGPUDynamicPickFromSnapshot(pick, resolutionSnapshot) : undefined;
+            return pick
+                ? resolveWebGPUDynamicPickFromSnapshot(pick, request.resolutionSnapshot)
+                : undefined;
         } finally {
             readback.unmap();
         }
