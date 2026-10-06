@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+    WebGPUDynamicHeightBindGroupCache,
+    WebGPUGrowableBufferCache,
+} from "../render/webgpu/dynamic/WebGPUDynamicResourceHelpers";
+import {
     addWebGPUDynamicPhaseSample,
     emptyWebGPUDynamicPhaseCounters,
     trackWebGPUDynamicPhaseDrawCalls,
@@ -151,4 +155,95 @@ assert.deepEqual(counters, {
     drawCalls: 2,
 });
 
-console.log("WebGPU dynamic registry cutover checks passed");
+// Shared growable instance-buffer helper preserves the existing doubling policy
+// while exposing allocation/reuse/upload diagnostics.
+const createdBuffers: Array<{ size: number; destroyed: boolean }> = [];
+let bufferWrites = 0;
+let bindGroupAllocations = 0;
+let textureAllocations = 0;
+let textureDestroys = 0;
+const resourceDevice = {
+    queue: {
+        writeBuffer() {
+            bufferWrites++;
+        },
+        writeTexture() {},
+    },
+    createBuffer(descriptor: any) {
+        const record = { size: descriptor.size as number, destroyed: false };
+        createdBuffers.push(record);
+        return {
+            destroy() {
+                record.destroyed = true;
+            },
+        };
+    },
+    createTexture() {
+        textureAllocations++;
+        return {
+            createView() {
+                return {};
+            },
+            destroy() {
+                textureDestroys++;
+            },
+        };
+    },
+    createBindGroup() {
+        bindGroupAllocations++;
+        return {};
+    },
+} as any;
+
+const buffers = new WebGPUGrowableBufferCache(resourceDevice, "dynamic-test");
+assert.ok(buffers.getOrWrite("actor", new Float32Array(4)));
+assert.ok(buffers.getOrWrite("actor", new Float32Array(2)));
+assert.ok(buffers.getOrWrite("actor", new Float32Array(10)));
+assert.equal(bufferWrites, 3);
+assert.deepEqual(createdBuffers.map((entry) => entry.size), [16, 40]);
+assert.equal(createdBuffers[0].destroyed, true, "growth retires the old buffer");
+assert.deepEqual(buffers.getDiagnostics(), {
+    allocations: 2,
+    reuses: 1,
+    grows: 1,
+    writes: 3,
+    destroys: 1,
+    bytesUploaded: 64,
+    liveBuffers: 1,
+    liveCapacityBytes: 40,
+});
+buffers.dispose();
+assert.equal(createdBuffers[1].destroyed, true);
+assert.equal(buffers.getDiagnostics().liveBuffers, 0);
+assert.equal(buffers.getDiagnostics().destroys, 2);
+
+// Height bind-group helper reuses a stable source and replaces only when the
+// source identity or size changes. Underlying textures are ref-counted globally.
+const heightCache = new WebGPUDynamicHeightBindGroupCache(
+    resourceDevice,
+    {} as any,
+    "dynamic-test",
+);
+const heightSourceA = new Int16Array(4 * 4 * 4);
+const heightSourceB = new Int16Array(4 * 4 * 4);
+const heightA1 = heightCache.get(7, heightSourceA, 4);
+const heightA2 = heightCache.get(7, heightSourceA, 4);
+assert.equal(heightA1, heightA2);
+const heightB = heightCache.get(7, heightSourceB, 4);
+assert.notEqual(heightA1, heightB);
+assert.equal(bindGroupAllocations, 2);
+assert.equal(textureAllocations, 2);
+assert.equal(textureDestroys, 1, "replacement releases the old unshared height texture");
+assert.deepEqual(heightCache.getDiagnostics(), {
+    allocations: 2,
+    reuses: 1,
+    replacements: 1,
+    releases: 1,
+    liveEntries: 1,
+});
+heightCache.dispose();
+assert.equal(textureDestroys, 2);
+assert.equal(heightCache.getDiagnostics().liveEntries, 0);
+assert.equal(heightCache.getDiagnostics().releases, 2);
+
+console.log("WebGPU dynamic registry and resource helper checks passed");
