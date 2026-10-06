@@ -2,7 +2,7 @@
 
 This checkpoint adds the first WebGPU comparison path for actor-attached spot animations (GFX).
 
-The scope is intentionally limited to spot effects attached to players and NPCs. World-tile GFX and projectiles remain separate migration checkpoints.
+The original G1 scope is intentionally limited to spot effects attached to players and NPCs. World-tile GFX were added separately in G2, while projectiles remain a later migration checkpoint.
 
 ## Authoritative CPU sources
 
@@ -53,7 +53,7 @@ The WebGPU shader never samples the WebGL RGBA16UI actor texture.
 
 WebGL passes a positive `u_modelYOffset` to `npc.vert.glsl`, which subtracts it from model Y.
 
-The shared WebGPU actor vertex path adds `modelYOffset`, so the comparison bridge normalizes the sign:
+The shared WebGPU GFX vertex path adds `modelYOffset`, so the comparison bridge normalizes the sign:
 
 `modelYOffset = -round(yOffsetTiles * 128)`
 
@@ -61,9 +61,17 @@ Ground-anchored effects use zero offset.
 
 ## Shader and pipeline parity
 
-Attached GFX reuse the already-audited player WebGPU shader path because it has the same packed model/material decode and intentionally has no map-load fade.
+A G2 audit found that the first G1 implementation reused the player WebGPU shader. That was too broad: WebGL renders spot animations through the NPC program, and NPC/GFX depth semantics differ from player equipment-layer semantics.
 
-This matches current WebGL GFX behavior, which sets `u_timeLoaded = -1.0`.
+The corrected path uses `WebGPUGfxShader`, derived from the WebGPU NPC shader. It preserves the WebGL NPC/GFX rules:
+
+- plane separation is applied in view space before projection
+- packed face priority bias is applied in view space before projection
+- projected perspective changes with that bias, matching `npc.vert.glsl`
+- player-only depth-layer reprojection (`depthLayerClip`) is not used
+- map load fade is removed for GFX, matching WebGL's `u_timeLoaded = -1.0`
+
+The same audit corrected `WebGPUNpcOpaqueShader` so NPC opaque/alpha paths now carry the plane separation and pre-projection priority behavior that `npc.vert.glsl` actually uses.
 
 Both opaque and transparent attached GFX are double-sided because `GfxRenderer` disables `CULL_FACE` around spot-effect draws.
 
@@ -81,15 +89,13 @@ Alpha state:
 - depth write enabled
 - `less-equal` depth comparison
 - source-alpha / one-minus-source-alpha blending
-- the same early alpha-cutoff/discard path used by player/NPC transparency
+- the same early alpha-cutoff/discard path used by NPC transparency
 
-The shared shader also preserves:
+The GFX shader also preserves:
 
 - actor HSL override before scene HSL override
 - terrain-height interpolation
 - actor rotation
-- plane separation
-- packed face-priority depth bias
 - texture animation
 - material animation frames
 - brightness/color banding
@@ -105,7 +111,7 @@ No second spot-texture loader is introduced.
 
 ## Draw ordering
 
-The comparison lifecycle currently preserves the actor-class order:
+The comparison lifecycle preserves the actor-class order for G1:
 
 Opaque:
 
@@ -122,9 +128,13 @@ Transparent:
 4. transparent players
 5. player-attached transparent GFX
 
-Within the captured GFX lists, map traversal and attachment order follow the authoritative WebGL calls.
+Within each GFX capture, ordering follows `GfxRenderer`:
 
-The comparison architecture still operates at class-level boundaries, so it does not yet reproduce every per-map interleave from the WebGL renderer. That remains a broader actor-phase parity task and is not expanded in this checkpoint.
+1. first-seen `(spotId, frame)` group
+2. first-seen Y-offset group inside that spot/frame group
+3. original attachment order inside the Y-offset group
+
+G2 inserts world-tile GFX after the attached-GFX opaque boundary and between NPC-attached GFX and transparent players. The comparison architecture still operates at class-level boundaries, so it does not yet reproduce every per-map interleave from the WebGL renderer.
 
 ## Current WebGL world-view behavior
 
@@ -132,12 +142,11 @@ Current `GfxRenderer` sets `u_worldEntityTransform` to identity for attached GFX
 
 The WebGPU comparison intentionally preserves that current behavior by packing the parent actor transform with an identity world matrix. This is parity, not an endorsement of the behavior. If the authoritative renderer later changes attached GFX to follow world-entity transforms, both backends should move together.
 
-## Explicitly deferred
+## Explicitly deferred from G1
 
-This checkpoint does not migrate:
+G1 itself does not implement:
 
-- world-tile GFX created by `spawnAtTile()`
-- `worldGfxDataTextureOffsets`
+- world-tile GFX created by `spawnAtTile()`; implemented separately by G2
 - projectiles
 - projectile pitch/roll packing
 - GFX or projectile picking
@@ -150,6 +159,9 @@ This checkpoint does not migrate:
 
 - opaque/alpha pipeline state
 - double-sided rendering
+- NPC-derived GFX shader selection
+- NPC/GFX pre-projection plane and priority depth
+- exclusion of player `depthLayerClip` behavior
 - alpha blending and discard order
 - no map-load fade
 - exact WebGL-selected frame capture via `lastSoundFrame`
@@ -159,11 +171,12 @@ This checkpoint does not migrate:
 - offset-anchor sign normalization
 - identity world-transform parity
 - existing WebGPU texture synchronization
+- WebGL-equivalent GFX grouping order
 - opaque and transparent installation order
-- exclusion of world-tile GFX and projectiles
+- exclusion of world-tile GFX from the G1 module and exclusion of projectiles
 
 The test is wired into both the normal client test chain and `test:webgpu-foundation`.
 
-## Next checkpoint
+## Follow-up
 
-The next small checkpoint should migrate world-tile GFX or projectiles independently. Projectiles require their own transform contract because the current actor record packs yaw, pitch, roll, and projectile identity differently from players/NPCs/GFX.
+World-tile GFX are covered by `WEBGPU_WORLD_GFX.md`. Projectiles remain separate because their current actor record packs yaw, pitch, roll, and projectile identity differently from players/NPCs/GFX.
