@@ -16,7 +16,16 @@ export interface WebGPUTransparentActorPhaseHandler {
     dispose?: (renderer: WebGPUStaticSceneRenderer) => void;
 }
 
+export interface WebGPUTransparentActorPhaseDiagnostics {
+    frameToken: number;
+    invokedHandlers: readonly string[];
+}
+
 const handlers = new Map<string, WebGPUTransparentActorPhaseHandler>();
+const diagnostics = new WeakMap<
+    WebGPUStaticSceneRenderer,
+    WebGPUTransparentActorPhaseDiagnostics
+>();
 let prototypePatched = false;
 
 function sortedHandlers(): WebGPUTransparentActorPhaseHandler[] {
@@ -41,15 +50,22 @@ function patchStaticRendererPrototype(): void {
         locPipeline: WebGPURenderPipelineLike,
     ) {
         originalDrawTransparentScene.call(this, pass, frame, terrainPipeline, locPipeline);
+        const invokedHandlers: string[] = [];
         for (const handler of sortedHandlers()) {
+            invokedHandlers.push(handler.id);
             handler.draw(this, pass, frame);
         }
+        diagnostics.set(this, {
+            frameToken: frame.currentTime,
+            invokedHandlers,
+        });
     };
 
     proto.dispose = function (this: WebGPUStaticSceneRenderer) {
         for (const handler of sortedHandlers()) {
             handler.dispose?.(this);
         }
+        diagnostics.delete(this);
         return originalDispose.call(this);
     };
 }
@@ -63,4 +79,10 @@ export function registerWebGPUTransparentActorPhase(
 
 export function getWebGPUTransparentActorPhaseOrderForTests(): string[] {
     return sortedHandlers().map((handler) => handler.id);
+}
+
+export function getWebGPUTransparentActorPhaseDiagnostics(
+    renderer: WebGPUStaticSceneRenderer,
+): WebGPUTransparentActorPhaseDiagnostics | undefined {
+    return diagnostics.get(renderer);
 }
