@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 
 import {
+    getWebGPUHeightMapSharingDiagnostics,
     packR16TextureRowsForWebGPU,
     WEBGPU_HEIGHT_MAP_LAYERS,
+    WebGPUHeightMapResources,
 } from "../render/webgpu/loc/WebGPUHeightMapResources";
 
 const size = 76;
@@ -37,4 +39,49 @@ for (let layer = 0; layer < WEBGPU_HEIGHT_MAP_LAYERS; layer++) {
     }
 }
 
-console.log("webgpu height-map row packing checks passed");
+let textureAllocations = 0;
+let textureUploads = 0;
+let textureDestroys = 0;
+const sharedTexture = {
+    createView: () => ({}),
+    destroy: () => {
+        textureDestroys++;
+    },
+};
+const fakeDevice = {
+    queue: {
+        writeTexture: () => {
+            textureUploads++;
+        },
+    },
+    createTexture: () => {
+        textureAllocations++;
+        return sharedTexture;
+    },
+} as any;
+
+const sharedSource = new Int16Array(4 * 4 * WEBGPU_HEIGHT_MAP_LAYERS);
+const first = new WebGPUHeightMapResources(fakeDevice, 4, sharedSource);
+const second = new WebGPUHeightMapResources(fakeDevice, 4, sharedSource);
+assert.equal(first.texture, second.texture, "same source identity shares one GPU texture");
+assert.equal(textureAllocations, 1);
+assert.equal(textureUploads, 1);
+assert.deepEqual(getWebGPUHeightMapSharingDiagnostics(fakeDevice), {
+    allocations: 1,
+    reuses: 1,
+    releases: 0,
+    destroys: 0,
+});
+
+first.dispose();
+assert.equal(textureDestroys, 0, "shared texture stays alive while another owner remains");
+second.dispose();
+assert.equal(textureDestroys, 1, "last owner releases the shared texture");
+assert.deepEqual(getWebGPUHeightMapSharingDiagnostics(fakeDevice), {
+    allocations: 1,
+    reuses: 1,
+    releases: 2,
+    destroys: 1,
+});
+
+console.log("webgpu height-map row packing and sharing checks passed");
