@@ -32,7 +32,7 @@
     "threads": "^1.7.0",
     "typescript": "6.0.3",
     "usehooks-ts": "^3.1.1",
-    "wasm-gzip": "^1.0.0",
+    "wasm-gzip": "^2.1.0",
     "web-vitals": "^5.3.0",
     "webfontloader": "^1.6.28",
     "xxhash-wasm": "^1.1.0"
@@ -138,7 +138,7 @@
     "json-minimizer-webpack-plugin": "^5.0.1",
     "path": "^0.12.7",
     "threads-plugin": "^1.4.0",
-    "ts-shader-loader": "^1.0.0",
+    "ts-shader-loader": "^2.1.0",
     "tsx": "^4.22.4"
   },
   "packageManager": "yarn@4.12.0+sha512.f45ab632439a67f8bc759bf32ead036a1f413287b9042726b7cc4818b7b49e14e9423ba49b18f9e06ea4941c1ad062385b1d8760a8d5091a1a31e5f6219afca8"
