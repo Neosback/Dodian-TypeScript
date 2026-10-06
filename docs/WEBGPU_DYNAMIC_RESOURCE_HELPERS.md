@@ -6,11 +6,11 @@ The goal is to remove repeated low-level allocation mechanics without merging re
 
 ## Scope
 
-This checkpoint deliberately separates the resource work into two stages.
+This resource consolidation is intentionally staged so each renderer can be diff-audited independently.
 
 ### K1: helper foundation and shared height texture backing
 
-Implemented here:
+Implemented:
 
 - ref-counted sharing of signed `r16sint` height-map textures
 - growable keyed instance-buffer helper
@@ -20,19 +20,25 @@ Implemented here:
 
 ### K2: runtime adoption
 
-Deferred to the next small checkpoint:
+Current adoption matrix:
 
-- replace player opaque/alpha local instance-buffer maps with `WebGPUGrowableBufferCache`
-- replace NPC opaque/alpha local instance-buffer maps with the helper
-- replace attached/world GFX local instance-buffer maps with the helper
-- replace projectile local instance-buffer maps with the helper
-- replace each runtime's local height-map/bind-group map with `WebGPUDynamicHeightBindGroupCache`
+| Runtime | Shared height bind-group cache | Shared growable instance buffer |
+| --- | --- | --- |
+| Player opaque | yes | yes |
+| Player alpha | yes | yes |
+| NPC opaque | pending | pending |
+| NPC alpha | pending | pending |
+| Attached GFX | pending | pending |
+| World GFX | pending | pending |
+| Projectile | pending | pending |
 
-Doing this one runtime at a time keeps the migration easy to audit and avoids changing seven large renderer modules in one commit stack.
+The player opaque/alpha migration is complete. Their geometry caches, shader modules, pipeline states, capture hooks, instance keys, and draw ordering remain unchanged.
+
+The remaining K2 work should continue one category at a time, with a diff audit after each pair/path.
 
 ## Shared signed height-map textures
 
-`WebGPUHeightMapResources` now shares the underlying GPU texture by:
+`WebGPUHeightMapResources` shares the underlying GPU texture by:
 
 - GPU device identity
 - source `Int16Array` identity
@@ -42,7 +48,7 @@ The first owner performs the `r16sint` texture allocation and upload. Additional
 
 `dispose()` releases one reference. The GPU texture is destroyed only after the last owner releases it.
 
-This is already active for existing dynamic comparison runtimes because they all construct `WebGPUHeightMapResources` from the same map height source. Their existing category-local bind groups remain valid while the expensive texture allocation/upload is deduplicated underneath them.
+This is active across existing dynamic comparison runtimes because they construct `WebGPUHeightMapResources` from the same map height source. As category-local bind-group caches are replaced during K2, they continue to reference the same shared texture through `WebGPUDynamicHeightBindGroupCache`.
 
 Diagnostics are exposed through:
 
@@ -91,7 +97,7 @@ Diagnostics:
 - create the runtime-layout-compatible bind group
 - dispose all entries during runtime teardown
 
-The underlying `WebGPUHeightMapResources` texture is already shared globally, so separate runtime bind-group caches can safely reference the same uploaded texture while retaining their own bind-group-layout identity.
+The underlying `WebGPUHeightMapResources` texture is shared globally, so separate runtime bind-group caches can safely reference the same uploaded texture while retaining their own bind-group-layout identity.
 
 Diagnostics:
 
@@ -100,6 +106,25 @@ Diagnostics:
 - replacements
 - releases
 - live entries
+
+## Player adoption
+
+`WebGPUPlayerOpaqueRuntime` and `WebGPUPlayerAlphaRuntime` now use:
+
+- `WebGPUDynamicHeightBindGroupCache` for per-map signed height bind groups
+- `WebGPUGrowableBufferCache` for keyed instance vertex buffers
+
+The migration removes each player's duplicate `HeightGpuResources` and `InstanceGpuResources` maps and delegates their previous allocation/reuse/disposal mechanics to the shared helpers.
+
+The following remain local and unchanged:
+
+- opaque and alpha player geometry caches
+- appearance/animation pose resolution
+- world-view transform packing
+- first-person double-sided selection
+- alpha blend/depth behavior
+- capture timing
+- registry order
 
 ## What remains category-specific
 
@@ -120,7 +145,7 @@ Those differences are semantic rather than allocation boilerplate and should rem
 
 ## Validation
 
-`webgpu-height-map.test.ts` now verifies:
+`webgpu-height-map.test.ts` verifies:
 
 - two owners of the same source share one texture
 - the texture is uploaded once
@@ -128,7 +153,7 @@ Those differences are semantic rather than allocation boilerplate and should rem
 - releasing the last owner does destroy it
 - allocation/reuse/release diagnostics
 
-`webgpu-dynamic-parity-audit.test.ts` now verifies:
+`webgpu-dynamic-parity-audit.test.ts` verifies:
 
 - growable buffer reuse
 - growth and superseded-buffer destruction
@@ -137,9 +162,11 @@ Those differences are semantic rather than allocation boilerplate and should rem
 - height bind-group reuse for stable source identity
 - replacement when source identity changes
 - release diagnostics
+- player opaque and alpha both import/use the shared helper classes
+- the old player-local height/instance resource maps are absent
 
-Both tests were already part of `test:webgpu-foundation`, so no package-script change is required.
+Both tests are already part of `test:webgpu-foundation`, so no package-script change is required.
 
 ## Next step
 
-K2 should adopt these helpers in the dynamic runtimes one category at a time, with a diff audit after each category. Geometry cache ownership must remain local throughout that migration.
+Continue K2 with NPC opaque and alpha, preserving their current-pose geometry ownership and all shader/pipeline behavior. After the NPC pair is audited, migrate attached GFX, world GFX, and projectiles in separate small steps.
