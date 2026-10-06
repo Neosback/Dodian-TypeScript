@@ -51,10 +51,12 @@ fn vsProjectile(input: ProjectileVertexInput) -> GfxVertexOutput {
     let yawAngle = input.projectileTransform.w * RS_TO_RADIANS;
     let yawC = cos(yawAngle);
     let yawS = sin(yawAngle);
+    // GLSL rotationY is constructed for row-vector multiplication. For
+    // v * rotationY(angle): x' = x*c + z*s, z' = -x*s + z*c.
     localPos = vec3<f32>(
-        pitchRotated.x * yawC - pitchRotated.z * yawS,
+        pitchRotated.x * yawC + pitchRotated.z * yawS,
         pitchRotated.y,
-        pitchRotated.x * yawS + pitchRotated.z * yawC,
+        -pitchRotated.x * yawS + pitchRotated.z * yawC,
     );
 
     let tilePos = input.projectileTransform.xy + input.projectileRotation.zw;
