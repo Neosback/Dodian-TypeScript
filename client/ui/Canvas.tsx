@@ -7,6 +7,10 @@ import {
     installWebGPUNpcAttachedGfxAlphaBoundary,
     installWebGPUPlayerAttachedGfxAlphaBoundary,
 } from "../render/webgpu/gfx/WebGPUAttachedGfxComparison";
+import {
+    installWebGPUWorldGfxAlphaBoundary,
+    installWebGPUWorldGfxComparison,
+} from "../render/webgpu/gfx/WebGPUWorldGfxComparison";
 import { installWebGPUNpcAlphaComparison } from "../render/webgpu/npc/WebGPUNpcAlphaComparison";
 import { installWebGPUNpcOpaqueComparison } from "../render/webgpu/npc/WebGPUNpcOpaqueComparison";
 import { installWebGPUPlayerAlphaComparison } from "../render/webgpu/player/WebGPUPlayerAlphaComparison";
@@ -33,6 +37,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         let restorePlayerCaptureBoundary: (() => void) | undefined;
         let restorePlayerAlphaComparison: (() => void) | undefined;
         let restoreAttachedGfxComparison: (() => void) | undefined;
+        let restoreWorldGfxComparison: (() => void) | undefined;
         host.appendChild(renderer.canvas);
         renderer.attachResizeObserver();
         requestAnimationFrame(() => renderer.forceResize());
@@ -44,17 +49,17 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             // actor order is static scene -> NPC -> player, matching WebGL2.
             restoreNpcComparison = installWebGPUNpcOpaqueComparison(renderer);
             restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
-            // Attached opaque GFX is installed after players so its WebGPU
-            // boundary is static -> NPC -> player -> attached GFX.
+            // Attached opaque GFX is installed after players. World-tile GFX
+            // wraps that boundary next, matching WebGL's player/NPC/world GFX order.
             restoreAttachedGfxComparison = installWebGPUAttachedGfxComparison(renderer);
+            restoreWorldGfxComparison = installWebGPUWorldGfxComparison(renderer);
             restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
-            // NPC alpha installs its transparent actor phase first. NPC-attached
-            // GFX then wraps that phase before the existing player-alpha wrapper,
-            // preserving static -> NPC -> NPC GFX -> player ordering.
+            // Transparent ordering is static -> NPC -> NPC GFX -> world GFX ->
+            // player -> player GFX. Projectiles remain a separate checkpoint.
             restoreNpcAlphaComparison = installWebGPUNpcAlphaComparison(renderer);
             installWebGPUNpcAttachedGfxAlphaBoundary();
+            installWebGPUWorldGfxAlphaBoundary();
             restorePlayerAlphaComparison = installWebGPUPlayerAlphaComparison(renderer);
-            // Player-attached alpha GFX is appended after transparent players.
             installWebGPUPlayerAttachedGfxAlphaBoundary();
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
@@ -71,6 +76,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             restoreNpcAlphaComparison = undefined;
             restorePlayerCaptureBoundary?.();
             restorePlayerCaptureBoundary = undefined;
+            restoreWorldGfxComparison?.();
+            restoreWorldGfxComparison = undefined;
             restoreAttachedGfxComparison?.();
             restoreAttachedGfxComparison = undefined;
             restorePlayerComparison?.();
