@@ -32,15 +32,11 @@ assert.equal(WEBGPU_DYNAMIC_PICK_FORMAT, "rgba32uint");
 assert.equal(WEBGPU_DYNAMIC_PICK_BYTES_PER_PIXEL, 16);
 assert.equal(WEBGPU_DYNAMIC_PICK_BYTES_PER_ROW, 256);
 
-// Async readback must resolve against the actor identity captured when the
-// request was issued, not whatever player-slot assignment exists later.
+// Async readback resolves against an actor identity snapshot captured at the
+// same GPU submission boundary as the actor buffers/uniforms being replayed.
 const resolutionSnapshot: DynamicPickResolutionSnapshot = {
-    players: new Map([
-        ["12860:32771", { actorId: 77, serverId: 901 }],
-    ]),
-    npcs: new Map([
-        [456, { actorId: 12, serverId: 456 }],
-    ]),
+    players: new Map([["12860:32771", { actorId: 77, serverId: 901 }]]),
+    npcs: new Map([[456, { actorId: 12, serverId: 456 }]]),
 };
 assert.deepEqual(
     resolveWebGPUDynamicPickFromSnapshot(
@@ -112,26 +108,35 @@ assert.match(controllerSource, /if \(this\.busy\)/);
 assert.match(controllerSource, /this\.queued\?\.resolve\(undefined\)/);
 assert.match(controllerSource, /this\.queued = request/);
 
-// Identity is frozen synchronously in request() before execute() can await
-// shader initialization or GPU mapping.
-const requestStart = controllerSource.indexOf("request(\n");
+// SceneFrameDescription is mutable, so freeze identity after async pipeline
+// initialization but immediately before scene uniforms and actor replay are submitted.
+const renderStart = controllerSource.indexOf("private async renderAndRead");
+const ensureInitialized = controllerSource.indexOf("await this.ensureInitialized()", renderStart);
 const snapshotCapture = controllerSource.indexOf(
     "const resolutionSnapshot = captureResolutionSnapshot(this.host)",
-    requestStart,
+    renderStart,
 );
-const executeRequest = controllerSource.indexOf("void this.execute(request)", requestStart);
-const ensureInitialized = controllerSource.indexOf("await this.ensureInitialized()", requestStart);
-assert.ok(requestStart >= 0 && snapshotCapture > requestStart && executeRequest > snapshotCapture);
-assert.ok(ensureInitialized > executeRequest);
+const sceneUpdate = controllerSource.indexOf("sceneUniforms.update(request.frame)", renderStart);
+const mapAsync = controllerSource.indexOf("await readback.mapAsync", renderStart);
+assert.ok(
+    renderStart >= 0 &&
+        ensureInitialized > renderStart &&
+        snapshotCapture > ensureInitialized &&
+        sceneUpdate > snapshotCapture &&
+        mapAsync > sceneUpdate,
+);
 assert.match(controllerSource, /getRenderPlayersForMap\(map\)/);
 assert.match(controllerSource, /PLAYER_INTERACT_BASE \+ \(slot & 0x7fff\)/);
 assert.match(controllerSource, /getServerLinkedEcsIds\(\)/);
-assert.match(controllerSource, /resolveWebGPUDynamicPickFromSnapshot\(pick, request\.resolutionSnapshot\)/);
+assert.match(controllerSource, /resolveWebGPUDynamicPickFromSnapshot\(pick, resolutionSnapshot\)/);
 
 // The actor-only pick pass replays the existing prepared GPU phases in the
 // intended order and excludes effect/projectile phases.
 const replayStart = controllerSource.indexOf("private replayActorPhases");
-const opaqueNpc = controllerSource.indexOf('replayWebGPUOpaqueActorPhase(\n            "npc"', replayStart);
+const opaqueNpc = controllerSource.indexOf(
+    'replayWebGPUOpaqueActorPhase(\n            "npc"',
+    replayStart,
+);
 const opaquePlayer = controllerSource.indexOf(
     'replayWebGPUOpaqueActorPhase(\n            "player"',
     replayStart,
@@ -151,7 +156,10 @@ assert.ok(
         alphaNpc > opaquePlayer &&
         alphaPlayer > alphaNpc,
 );
-const replayBody = controllerSource.slice(replayStart, controllerSource.indexOf("private async renderAndRead", replayStart));
+const replayBody = controllerSource.slice(
+    replayStart,
+    controllerSource.indexOf("private async renderAndRead", replayStart),
+);
 assert.doesNotMatch(replayBody, /"attached-gfx"/);
 assert.doesNotMatch(replayBody, /"world-gfx"/);
 assert.doesNotMatch(replayBody, /"projectile"/);
@@ -165,8 +173,13 @@ assert.match(controllerSource, /label\.includes\("no-cull"\)/);
 assert.match(comparisonSource, /export function requestWebGPUTerrainDynamicPick/);
 assert.match(comparisonSource, /new WebGPUDynamicPickingController/);
 assert.match(comparisonSource, /state\.dynamicPicking\?\.dispose\(\)/);
-const requestSurfaceStart = comparisonSource.indexOf("export function requestWebGPUTerrainDynamicPick");
-const requestSurfaceEnd = comparisonSource.indexOf("export function syncWebGPUTerrainTextures", requestSurfaceStart);
+const requestSurfaceStart = comparisonSource.indexOf(
+    "export function requestWebGPUTerrainDynamicPick",
+);
+const requestSurfaceEnd = comparisonSource.indexOf(
+    "export function syncWebGPUTerrainTextures",
+    requestSurfaceStart,
+);
 const requestSurface = comparisonSource.slice(requestSurfaceStart, requestSurfaceEnd);
 assert.doesNotMatch(requestSurface, /interactHighlight/);
 assert.doesNotMatch(requestSurface, /menuOpen|menuEntries|checkInteractions/);
