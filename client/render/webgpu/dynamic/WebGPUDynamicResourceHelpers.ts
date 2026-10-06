@@ -8,6 +8,8 @@ import {
 import {
     WEBGPU_HEIGHT_MAP_LAYERS,
     WebGPUHeightMapResources,
+    getWebGPUHeightMapSharingDiagnostics,
+    type WebGPUHeightMapSharingDiagnostics,
 } from "../loc/WebGPUHeightMapResources";
 
 export function alignWebGPUBufferSize(byteLength: number): number {
@@ -28,6 +30,39 @@ export interface WebGPUGrowableBufferDiagnostics {
 interface GrowableBufferEntry {
     buffer: WebGPUBufferLike;
     capacityBytes: number;
+}
+
+const liveBufferCaches = new WeakMap<
+    WebGPUDeviceLike,
+    Set<WebGPUGrowableBufferCache>
+>();
+const liveHeightBindGroupCaches = new WeakMap<
+    WebGPUDeviceLike,
+    Set<WebGPUDynamicHeightBindGroupCache>
+>();
+
+function registerLiveCache<T extends object>(
+    registry: WeakMap<WebGPUDeviceLike, Set<T>>,
+    device: WebGPUDeviceLike,
+    cache: T,
+): void {
+    let caches = registry.get(device);
+    if (!caches) {
+        caches = new Set();
+        registry.set(device, caches);
+    }
+    caches.add(cache);
+}
+
+function unregisterLiveCache<T extends object>(
+    registry: WeakMap<WebGPUDeviceLike, Set<T>>,
+    device: WebGPUDeviceLike,
+    cache: T,
+): void {
+    const caches = registry.get(device);
+    if (!caches) return;
+    caches.delete(cache);
+    if (caches.size === 0) registry.delete(device);
 }
 
 /**
@@ -54,7 +89,9 @@ export class WebGPUGrowableBufferCache {
         private readonly device: WebGPUDeviceLike,
         private readonly labelPrefix: string,
         private readonly usage = WEBGPU_BUFFER_USAGE.VERTEX | WEBGPU_BUFFER_USAGE.COPY_DST,
-    ) {}
+    ) {
+        registerLiveCache(liveBufferCaches, device, this);
+    }
 
     getOrWrite(
         key: string,
@@ -104,6 +141,10 @@ export class WebGPUGrowableBufferCache {
         return { ...this.diagnostics };
     }
 
+    getDiagnosticsLabel(): string {
+        return this.labelPrefix;
+    }
+
     dispose(): void {
         for (const entry of this.entries.values()) {
             entry.buffer.destroy?.();
@@ -112,6 +153,7 @@ export class WebGPUGrowableBufferCache {
         this.entries.clear();
         this.diagnostics.liveBuffers = 0;
         this.diagnostics.liveCapacityBytes = 0;
+        unregisterLiveCache(liveBufferCaches, this.device, this);
     }
 }
 
@@ -151,7 +193,9 @@ export class WebGPUDynamicHeightBindGroupCache {
         private readonly device: WebGPUDeviceLike,
         private readonly layout: WebGPUBindGroupLayoutLike,
         private readonly labelPrefix: string,
-    ) {}
+    ) {
+        registerLiveCache(liveHeightBindGroupCaches, device, this);
+    }
 
     get(
         key: number,
@@ -200,6 +244,10 @@ export class WebGPUDynamicHeightBindGroupCache {
         return { ...this.diagnostics };
     }
 
+    getDiagnosticsLabel(): string {
+        return this.labelPrefix;
+    }
+
     dispose(): void {
         for (const entry of this.entries.values()) {
             entry.heightMap.dispose();
@@ -207,5 +255,107 @@ export class WebGPUDynamicHeightBindGroupCache {
         }
         this.entries.clear();
         this.diagnostics.liveEntries = 0;
+        unregisterLiveCache(liveHeightBindGroupCaches, this.device, this);
     }
+}
+
+export interface WebGPUGrowableBufferAggregateDiagnostics
+    extends WebGPUGrowableBufferDiagnostics {
+    label: string;
+    cacheCount: number;
+}
+
+export interface WebGPUHeightBindGroupAggregateDiagnostics
+    extends WebGPUHeightBindGroupCacheDiagnostics {
+    label: string;
+    cacheCount: number;
+}
+
+export interface WebGPUDynamicResourceDiagnostics {
+    instanceBuffers: WebGPUGrowableBufferAggregateDiagnostics[];
+    heightBindGroups: WebGPUHeightBindGroupAggregateDiagnostics[];
+    heightTextures: WebGPUHeightMapSharingDiagnostics;
+}
+
+function aggregateBufferDiagnostics(
+    caches: ReadonlySet<WebGPUGrowableBufferCache> | undefined,
+): WebGPUGrowableBufferAggregateDiagnostics[] {
+    const byLabel = new Map<string, WebGPUGrowableBufferAggregateDiagnostics>();
+    for (const cache of caches ?? []) {
+        const label = cache.getDiagnosticsLabel();
+        const source = cache.getDiagnostics();
+        let target = byLabel.get(label);
+        if (!target) {
+            target = {
+                label,
+                cacheCount: 0,
+                allocations: 0,
+                reuses: 0,
+                grows: 0,
+                writes: 0,
+                destroys: 0,
+                bytesUploaded: 0,
+                liveBuffers: 0,
+                liveCapacityBytes: 0,
+            };
+            byLabel.set(label, target);
+        }
+        target.cacheCount++;
+        target.allocations += source.allocations;
+        target.reuses += source.reuses;
+        target.grows += source.grows;
+        target.writes += source.writes;
+        target.destroys += source.destroys;
+        target.bytesUploaded += source.bytesUploaded;
+        target.liveBuffers += source.liveBuffers;
+        target.liveCapacityBytes += source.liveCapacityBytes;
+    }
+    return Array.from(byLabel.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function aggregateHeightBindGroupDiagnostics(
+    caches: ReadonlySet<WebGPUDynamicHeightBindGroupCache> | undefined,
+): WebGPUHeightBindGroupAggregateDiagnostics[] {
+    const byLabel = new Map<string, WebGPUHeightBindGroupAggregateDiagnostics>();
+    for (const cache of caches ?? []) {
+        const label = cache.getDiagnosticsLabel();
+        const source = cache.getDiagnostics();
+        let target = byLabel.get(label);
+        if (!target) {
+            target = {
+                label,
+                cacheCount: 0,
+                allocations: 0,
+                reuses: 0,
+                replacements: 0,
+                releases: 0,
+                liveEntries: 0,
+            };
+            byLabel.set(label, target);
+        }
+        target.cacheCount++;
+        target.allocations += source.allocations;
+        target.reuses += source.reuses;
+        target.replacements += source.replacements;
+        target.releases += source.releases;
+        target.liveEntries += source.liveEntries;
+    }
+    return Array.from(byLabel.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Device-level snapshot for browser A/B profiling. Only live dynamic caches are
+ * reported; disposed runtimes unregister themselves while height-texture sharing
+ * counters remain cumulative for the device lifetime.
+ */
+export function getWebGPUDynamicResourceDiagnostics(
+    device: WebGPUDeviceLike,
+): WebGPUDynamicResourceDiagnostics {
+    return {
+        instanceBuffers: aggregateBufferDiagnostics(liveBufferCaches.get(device)),
+        heightBindGroups: aggregateHeightBindGroupDiagnostics(
+            liveHeightBindGroupCaches.get(device),
+        ),
+        heightTextures: getWebGPUHeightMapSharingDiagnostics(device),
+    };
 }
