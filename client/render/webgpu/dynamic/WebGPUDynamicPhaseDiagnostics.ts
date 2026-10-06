@@ -27,16 +27,16 @@ export function addWebGPUDynamicPhaseSample(
 
 /**
  * Count GPU draw submissions without changing the render-pass API seen by a
- * dynamic phase. Function properties are rebound to the real encoder so WebGPU
- * brand checks still receive the native target as `this`.
+ * dynamic phase. Property access and function calls are rebound to the real
+ * encoder so WebGPU brand checks always receive the native target.
  */
 export function trackWebGPUDynamicPhaseDrawCalls(
     pass: WebGPURenderPassEncoderLike,
 ): { pass: WebGPURenderPassEncoderLike; getDrawCalls: () => number } {
     let drawCalls = 0;
     const tracked = new Proxy(pass as object, {
-        get(target, property, receiver) {
-            const value = Reflect.get(target, property, receiver);
+        get(target, property) {
+            const value = Reflect.get(target, property, target);
             if (typeof value !== "function") return value;
             if (property === "draw" || property === "drawIndexed") {
                 return (...args: unknown[]) => {
