@@ -40,6 +40,10 @@ const npcAlphaSource = readFileSync(
     new URL("../render/webgpu/npc/WebGPUNpcAlphaComparison.ts", import.meta.url),
     "utf8",
 );
+const attachedGfxSource = readFileSync(
+    new URL("../render/webgpu/gfx/WebGPUAttachedGfxComparison.ts", import.meta.url),
+    "utf8",
+);
 
 // Canvas must delegate the complete dynamic comparison lifecycle to one installer.
 assert.match(canvasSource, /installWebGPUDynamicComparisons/);
@@ -142,9 +146,15 @@ for (const source of [opaquePhaseSource, transparentPhaseSource]) {
 assert.match(opaquePhaseSource, /getWebGPUOpaqueActorPhaseDiagnostics/);
 assert.match(transparentPhaseSource, /getWebGPUTransparentActorPhaseDiagnostics/);
 
-// Player and NPC opaque/alpha runtimes must use the shared height/buffer helpers
-// rather than maintaining their former local duplicate maps.
-for (const source of [playerOpaqueSource, playerAlphaSource, npcOpaqueSource, npcAlphaSource]) {
+// Migrated actor/GFX runtimes must use the shared height/buffer helpers rather
+// than maintaining their former local duplicate maps.
+for (const source of [
+    playerOpaqueSource,
+    playerAlphaSource,
+    npcOpaqueSource,
+    npcAlphaSource,
+    attachedGfxSource,
+]) {
     assert.match(source, /WebGPUDynamicHeightBindGroupCache/);
     assert.match(source, /WebGPUGrowableBufferCache/);
     assert.match(source, /heightCache\?\.dispose\(\)/);
