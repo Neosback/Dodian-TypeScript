@@ -44,6 +44,10 @@ const attachedGfxSource = readFileSync(
     new URL("../render/webgpu/gfx/WebGPUAttachedGfxComparison.ts", import.meta.url),
     "utf8",
 );
+const worldGfxSource = readFileSync(
+    new URL("../render/webgpu/gfx/WebGPUWorldGfxComparison.ts", import.meta.url),
+    "utf8",
+);
 
 // Canvas must delegate the complete dynamic comparison lifecycle to one installer.
 assert.match(canvasSource, /installWebGPUDynamicComparisons/);
@@ -154,6 +158,7 @@ for (const source of [
     npcOpaqueSource,
     npcAlphaSource,
     attachedGfxSource,
+    worldGfxSource,
 ]) {
     assert.match(source, /WebGPUDynamicHeightBindGroupCache/);
     assert.match(source, /WebGPUGrowableBufferCache/);
