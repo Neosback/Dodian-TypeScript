@@ -116,6 +116,24 @@ export function registerWebGPUOpaqueActorPhase(
     patchStaticRendererPrototype();
 }
 
+/**
+ * Replay one registered opaque actor phase into a caller-supplied pass.
+ *
+ * This is intentionally diagnostics-neutral: it is used by on-demand comparison
+ * passes such as GPU picking and must not mutate the normal frame counters.
+ */
+export function replayWebGPUOpaqueActorPhase(
+    id: string,
+    renderer: WebGPUStaticSceneRenderer,
+    pass: WebGPURenderPassEncoderLike,
+    frame: SceneFrameDescription,
+): boolean {
+    const handler = handlers.get(id);
+    if (!handler) return false;
+    handler.draw(renderer, pass, frame);
+    return true;
+}
+
 export function getWebGPUOpaqueActorPhaseOrderForTests(): string[] {
     return sortedHandlers().map((handler) => handler.id);
 }
