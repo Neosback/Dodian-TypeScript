@@ -1,6 +1,6 @@
 # WebGPU Dynamic Renderer Parity Audit
 
-This checkpoint audits the dynamic WebGPU comparison renderer after players, NPCs, attached/world GFX, and projectiles were brought into the A/B path.
+This document tracks the dynamic WebGPU comparison renderer after players, NPCs, attached/world GFX, and projectiles were brought into the A/B path.
 
 The goal is to reduce order/lifecycle fragility without changing rendering output or moving the live client away from WebGL2.
 
@@ -33,9 +33,7 @@ Transparent actor/effect map traversal is back-to-front where the WebGL renderer
 
 ## Lifecycle consolidation
 
-Before this checkpoint, `client/ui/Canvas.tsx` imported and installed every dynamic comparison module directly. Correct order therefore depended on the exact order of unrelated UI-level calls.
-
-`client/render/webgpu/dynamic/WebGPUDynamicComparisonLifecycle.ts` is now the single installation/cleanup entry point.
+`client/render/webgpu/dynamic/WebGPUDynamicComparisonLifecycle.ts` is the single installation/cleanup entry point.
 
 It exports canonical manifests:
 
@@ -46,43 +44,55 @@ and installs every comparison/capture boundary from one location.
 
 Cleanup runs in reverse installation order.
 
-`Canvas.tsx` now owns one restore callback for the complete dynamic comparison lifecycle.
+`Canvas.tsx` owns one restore callback for the complete dynamic comparison lifecycle.
+
+The lifecycle is gated by the existing `webgpuTerrain` comparison query, so normal WebGL startup does not install the dynamic comparison phase graph.
 
 ## Phase implementation audit
 
-The dynamic renderer currently has two implementation styles.
+Checkpoint J completes the dynamic phase registry cutover.
 
-| Category | Opaque | Transparent | State |
+| Category | Opaque | Transparent | Runtime phase owner |
 | --- | --- | --- | --- |
-| NPC | ordered phase registry | ordered phase registry | registry-backed |
-| Player | prototype boundary | prototype boundary | wrapper-backed |
-| Attached GFX | prototype boundary | split prototype boundaries | wrapper-backed |
-| World GFX | prototype boundary | prototype boundary | wrapper-backed |
-| Projectile | prototype boundary | prototype boundary | wrapper-backed |
+| NPC | ordered phase registry | ordered phase registry | registry |
+| Player | ordered phase registry | ordered phase registry | registry |
+| Attached GFX | ordered phase registry | ordered NPC/player attachment phases | registry |
+| World GFX | ordered phase registry | ordered phase registry | registry |
+| Projectile | ordered phase registry | ordered phase registry | registry |
 
-The lifecycle consolidation removes UI-level ordering drift, but it does **not** falsely claim these implementations are already one internal draw graph.
+The large player/GFX/projectile modules still contain their previously audited wrapper closures internally. They are no longer left installed on `WebGPUStaticSceneRenderer.prototype`.
 
-A later mechanical refactor should migrate the wrapper-backed categories onto the existing ordered phase registries once their capture/runtime boundaries can be moved without changing output.
+During the first comparison installation, each historical wrapper is installed once against a no-op predecessor, captured as the category implementation, and the prototype is immediately restored to the registry-owned method. The captured closure is then registered under an explicit phase ID/order.
 
-## Diagnostics added
+This transitional extraction preserves the exact existing runtime behavior while making the registries the sole owners of dynamic execution order and disposal.
 
-Both ordered actor phase registries now retain current-frame invocation diagnostics:
+Capture hooks remain unchanged and continue to observe authoritative WebGL state.
+
+## Diagnostics
+
+Both ordered actor phase registries expose:
 
 - frame token
-- ordered handler IDs invoked for that frame
+- ordered handler IDs invoked for the frame
+- per-category current-frame counters
+- per-category cumulative counters for the renderer lifetime
+
+Counter semantics:
+
+- `attempted`: frames in which the category phase was invoked
+- `drawn`: attempted frames that emitted at least one GPU draw
+- `skipped`: attempted frames that emitted no GPU draw
+- `drawCalls`: total `draw()` / `drawIndexed()` submissions
+
+These are phase-submission counters, not entity counters. A batched player draw containing multiple actor instances counts as one GPU draw call.
 
 APIs:
 
 - `getWebGPUOpaqueActorPhaseDiagnostics()`
 - `getWebGPUTransparentActorPhaseDiagnostics()`
-
-The centralized lifecycle also exposes installation diagnostics through:
-
 - `getWebGPUDynamicComparisonDiagnostics()`
 
-That reports the canonical opaque/transparent manifests plus the exact comparison install steps used for the renderer.
-
-These are intentionally lightweight diagnostics. They do not add production telemetry or alter rendering decisions.
+The pass encoder is observed through a comparison-only proxy that binds property access and method calls back to the native encoder target so WebGPU brand checks remain valid.
 
 ## Resource duplication audit
 
@@ -94,7 +104,7 @@ The player, NPC, GFX, world-GFX, and projectile comparison runtimes all contain 
 - aligned buffer sizing
 - map-key helpers
 
-The audit found that only the lowest-level mechanics are identical. The ownership/invalidation rules are not yet identical enough for one monolithic cache.
+Only the lowest-level mechanics are identical. The ownership/invalidation rules are not identical enough for one monolithic cache.
 
 ### Player/NPC
 
@@ -110,50 +120,53 @@ Projectile geometry also comes from the spot cache, but the instance ABI is dist
 
 ## Consolidation decision
 
-This checkpoint intentionally does **not** merge those caches behind one generic `DynamicResourceCache`.
+The phase graph is now unified, so low-level resource extraction is safer.
 
-Doing so now would hide different invalidation and ordering semantics behind a shared abstraction and make parity bugs harder to see.
+The recommended consolidation order is now:
 
-The safe consolidation order is:
+1. extract shared aligned-buffer allocation helpers
+2. extract the identical signed-height-map resource/bind-group cache mechanics
+3. keep geometry cache policy supplied by each category
+4. preserve the projectile-specific instance ABI
+5. evaluate geometry resource sharing only after browser/GPU parity validation
 
-1. finish moving all dynamic draw phases onto one ordered registry
-2. add per-category draw/skip counters at that registry boundary
-3. extract shared aligned-buffer and signed-height-map resource helpers
-4. keep geometry cache policy supplied by each category
-5. only then evaluate whether geometry resources can share a common owner
+A generic `DynamicResourceCache` is still not recommended because it would obscure category-specific invalidation and ordering semantics.
 
 ## Regression coverage
 
 `client/tests/webgpu-dynamic-parity-audit.test.ts` locks:
 
 - Canvas using one dynamic lifecycle installer
+- comparison opt-in gating
 - canonical opaque order
 - canonical transparent order
-- lifecycle install order
+- no-op extraction of legacy boundaries
+- restoration of registry-owned prototype methods
+- explicit numeric registry order for every migrated dynamic category
 - reverse cleanup order
-- phase registry frame diagnostics
-- disposal clearing diagnostics
+- per-category phase diagnostics
+- attempted/drawn/skipped/draw-call counter behavior
+- disposal clearing diagnostics and cumulative totals
 
-The test is included in both the normal client suite and `test:webgpu-foundation`.
+The test remains included in both the normal client suite and `test:webgpu-foundation`.
 
 ## Remaining dynamic parity risks
 
-1. Player/GFX/world-GFX/projectile draws still use nested prototype wrappers internally.
-2. Registry diagnostics currently describe registry-backed handlers; wrapper-backed categories expose installation order but not per-draw counters yet.
-3. Exact map-by-map interleaving remains coarser in parts of the comparison renderer than the live WebGL renderer.
-4. Dynamic picking/highlights have not been migrated.
-5. The live client still renders through WebGL2; WebGPU remains an opt-in comparison path.
-6. Browser/GPU A/B validation is still required before a backend cutover.
+1. Historical wrapper closures are retained as transitional category implementations behind the registries. They should eventually become ordinary exported phase functions once the comparison path is stable enough for that source cleanup.
+2. Exact map-by-map interleaving remains coarser in parts of the comparison renderer than the live WebGL renderer.
+3. Dynamic picking/highlights have not been migrated.
+4. The live client still renders through WebGL2; WebGPU remains an opt-in comparison path.
+5. Browser/GPU A/B validation is still required before a backend cutover.
+6. Dynamic runtimes still duplicate signed-height-map and growable instance-buffer mechanics.
 
 ## Recommended next checkpoint
 
-The next checkpoint should be a mechanical **dynamic phase registry cutover**:
+The next checkpoint should be a behavior-preserving **dynamic resource helper extraction**:
 
-- move player opaque/alpha into the existing ordered registries
-- move attached GFX into explicit opaque/NPC-alpha/player-alpha handlers
-- move world GFX into explicit ordered handlers
-- move projectiles into final opaque/transparent handlers
-- add per-category attempted/drawn/skipped counters
-- leave capture hooks unchanged
+- centralize aligned growable instance-buffer allocation
+- centralize signed height-map texture/bind-group caching
+- retain category-owned geometry caches and keys
+- retain all existing phase/capture order
+- add allocation/reuse diagnostics where useful
 
-That checkpoint should avoid shader, geometry, animation, or pipeline-state changes. Once the phase graph is genuinely unified, low-level resource helper extraction becomes much safer.
+Dynamic picking/highlights or live WebGPU activation should remain separate from that resource-only refactor.
