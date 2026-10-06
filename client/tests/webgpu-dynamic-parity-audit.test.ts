@@ -23,6 +23,10 @@ assert.doesNotMatch(canvasSource, /installWebGPUAttachedGfxComparison/);
 assert.doesNotMatch(canvasSource, /installWebGPUWorldGfxComparison/);
 assert.doesNotMatch(canvasSource, /installWebGPUProjectileComparison/);
 
+// Normal WebGL startup must not install dynamic comparison prototype boundaries.
+assert.match(lifecycleSource, /if \(!comparisonRequested\(\)\)/);
+assert.match(lifecycleSource, /return \(\) => \{\};/);
+
 // Canonical opaque order: static is outside this list and always precedes dynamic phases.
 const opaqueNpc = lifecycleSource.indexOf('"npc",');
 const opaquePlayer = lifecycleSource.indexOf('"player",', opaqueNpc + 1);
