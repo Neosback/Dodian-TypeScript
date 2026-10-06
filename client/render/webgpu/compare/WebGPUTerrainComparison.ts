@@ -7,6 +7,10 @@ import {
     type WebGPUAnimatedLocState,
     syncWebGPUAnimatedLocsForMap,
 } from "../loc/WebGPUStaticLocResources";
+import {
+    WebGPUDynamicPickingController,
+    type WebGPUDynamicResolvedPickResult,
+} from "../picking/WebGPUDynamicPickingController";
 import { WebGPUStaticSceneRenderer } from "../WebGPUStaticSceneRenderer";
 import { patchWebGPUStaticSceneShaderForWorldEntities } from "../WebGPUStaticSceneShaderPatch";
 import {
@@ -24,6 +28,7 @@ interface TerrainComparisonState {
     canvas: HTMLCanvasElement;
     backend: WebGPUGraphicsBackend;
     renderer: WebGPUStaticSceneRenderer;
+    dynamicPicking?: WebGPUDynamicPickingController;
     previousOnMapRemoved?: (mapX: number, mapY: number) => void;
     mapRemovedWrapper?: (mapX: number, mapY: number) => void;
     restoreMapObservers?: () => void;
@@ -119,6 +124,8 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     state.visibleMaps.length = 0;
     state.visibleMapLod.length = 0;
     state.canvas.style.display = "none";
+    try { state.dynamicPicking?.dispose(); } catch {}
+    state.dynamicPicking = undefined;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     const message = reason instanceof Error ? reason.message : String(reason);
@@ -346,6 +353,32 @@ export function getWebGPUTerrainComparisonCanvas(
     return state && !state.failed ? state.canvas : undefined;
 }
 
+/**
+ * Comparison-only dynamic actor query. It never mutates the authoritative CPU
+ * hover/menu/raycast state and returns undefined when comparison mode is absent.
+ */
+export function requestWebGPUTerrainDynamicPick(
+    host: WebGLOsrsRenderer,
+    canvasX: number,
+    canvasY: number,
+): Promise<WebGPUDynamicResolvedPickResult | undefined> {
+    const state = states.get(host);
+    if (!state || state.failed || !state.ready) return Promise.resolve(undefined);
+    if (!state.dynamicPicking) {
+        state.dynamicPicking = new WebGPUDynamicPickingController(
+            host,
+            state.renderer,
+            state.backend,
+        );
+    }
+    return state.dynamicPicking
+        .request(host.sceneFrameDescription, canvasX, canvasY)
+        .catch((error) => {
+            console.warn("[WebGPU dynamic picking] Comparison request failed", error);
+            return undefined;
+        });
+}
+
 export function syncWebGPUTerrainTextures(
     host: WebGLOsrsRenderer,
     textures: ReadonlyMap<number, Int32Array>,
@@ -492,6 +525,8 @@ export function disposeWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
     state.acceptedPartialMaps.clear();
     state.visibleMaps.length = 0;
     state.visibleMapLod.length = 0;
+    try { state.dynamicPicking?.dispose(); } catch {}
+    state.dynamicPicking = undefined;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     state.canvas.remove();
