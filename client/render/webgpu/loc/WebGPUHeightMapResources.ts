@@ -12,6 +12,54 @@ export interface PackedR16TextureRows {
     rowsPerImage: number;
 }
 
+export interface WebGPUHeightMapSharingDiagnostics {
+    allocations: number;
+    reuses: number;
+    releases: number;
+    destroys: number;
+}
+
+interface SharedHeightMapBacking {
+    texture: WebGPUTextureLike;
+    refs: number;
+}
+
+const sharedHeightMaps = new WeakMap<
+    WebGPUDeviceLike,
+    WeakMap<Int16Array, Map<number, SharedHeightMapBacking>>
+>();
+const sharingDiagnostics = new WeakMap<
+    WebGPUDeviceLike,
+    WebGPUHeightMapSharingDiagnostics
+>();
+
+function diagnosticsFor(device: WebGPUDeviceLike): WebGPUHeightMapSharingDiagnostics {
+    let diagnostics = sharingDiagnostics.get(device);
+    if (!diagnostics) {
+        diagnostics = { allocations: 0, reuses: 0, releases: 0, destroys: 0 };
+        sharingDiagnostics.set(device, diagnostics);
+    }
+    return diagnostics;
+}
+
+function sourceCacheFor(
+    device: WebGPUDeviceLike,
+): WeakMap<Int16Array, Map<number, SharedHeightMapBacking>> {
+    let cache = sharedHeightMaps.get(device);
+    if (!cache) {
+        cache = new WeakMap();
+        sharedHeightMaps.set(device, cache);
+    }
+    return cache;
+}
+
+export function getWebGPUHeightMapSharingDiagnostics(
+    device: WebGPUDeviceLike,
+): WebGPUHeightMapSharingDiagnostics {
+    const diagnostics = diagnosticsFor(device);
+    return { ...diagnostics };
+}
+
 export function packR16TextureRowsForWebGPU(
     source: Int16Array,
     width: number,
@@ -64,50 +112,104 @@ export function packR16TextureRowsForWebGPU(
     };
 }
 
+function acquireHeightMap(
+    device: WebGPUDeviceLike,
+    size: number,
+    data: Int16Array,
+): SharedHeightMapBacking {
+    const safeSize = Math.max(1, size | 0);
+    const sourceCache = sourceCacheFor(device);
+    let sizes = sourceCache.get(data);
+    if (!sizes) {
+        sizes = new Map();
+        sourceCache.set(data, sizes);
+    }
+
+    const existing = sizes.get(safeSize);
+    if (existing) {
+        existing.refs++;
+        diagnosticsFor(device).reuses++;
+        return existing;
+    }
+
+    const packed = packR16TextureRowsForWebGPU(
+        data,
+        safeSize,
+        safeSize,
+        WEBGPU_HEIGHT_MAP_LAYERS,
+    );
+    const texture = device.createTexture({
+        label: "scene-height-map",
+        size: {
+            width: safeSize,
+            height: safeSize,
+            depthOrArrayLayers: WEBGPU_HEIGHT_MAP_LAYERS,
+        },
+        dimension: "2d",
+        format: "r16sint",
+        usage: WEBGPU_TEXTURE_USAGE.COPY_DST | WEBGPU_TEXTURE_USAGE.TEXTURE_BINDING,
+    });
+
+    device.queue.writeTexture(
+        { texture },
+        packed.data,
+        {
+            bytesPerRow: packed.bytesPerRow,
+            rowsPerImage: packed.rowsPerImage,
+        },
+        {
+            width: safeSize,
+            height: safeSize,
+            depthOrArrayLayers: WEBGPU_HEIGHT_MAP_LAYERS,
+        },
+    );
+
+    const backing = { texture, refs: 1 };
+    sizes.set(safeSize, backing);
+    diagnosticsFor(device).allocations++;
+    return backing;
+}
+
+function releaseHeightMap(
+    device: WebGPUDeviceLike,
+    size: number,
+    data: Int16Array,
+    backing: SharedHeightMapBacking,
+): void {
+    const diagnostics = diagnosticsFor(device);
+    diagnostics.releases++;
+    backing.refs = Math.max(0, backing.refs - 1);
+    if (backing.refs !== 0) return;
+
+    backing.texture.destroy?.();
+    diagnostics.destroys++;
+
+    const sourceCache = sharedHeightMaps.get(device);
+    const sizes = sourceCache?.get(data);
+    if (!sizes) return;
+    if (sizes.get(size) === backing) sizes.delete(size);
+    if (sizes.size === 0) sourceCache?.delete(data);
+}
+
 export class WebGPUHeightMapResources {
     readonly texture: WebGPUTextureLike;
+    private readonly backing: SharedHeightMapBacking;
+    private disposed = false;
 
     constructor(
-        device: WebGPUDeviceLike,
+        private readonly device: WebGPUDeviceLike,
         readonly size: number,
-        data: Int16Array,
+        private readonly data: Int16Array,
     ) {
         const safeSize = Math.max(1, size | 0);
-        const packed = packR16TextureRowsForWebGPU(
-            data,
-            safeSize,
-            safeSize,
-            WEBGPU_HEIGHT_MAP_LAYERS,
-        );
-
-        this.texture = device.createTexture({
-            label: "scene-height-map",
-            size: {
-                width: safeSize,
-                height: safeSize,
-                depthOrArrayLayers: WEBGPU_HEIGHT_MAP_LAYERS,
-            },
-            dimension: "2d",
-            format: "r16sint",
-            usage: WEBGPU_TEXTURE_USAGE.COPY_DST | WEBGPU_TEXTURE_USAGE.TEXTURE_BINDING,
-        });
-
-        device.queue.writeTexture(
-            { texture: this.texture },
-            packed.data,
-            {
-                bytesPerRow: packed.bytesPerRow,
-                rowsPerImage: packed.rowsPerImage,
-            },
-            {
-                width: safeSize,
-                height: safeSize,
-                depthOrArrayLayers: WEBGPU_HEIGHT_MAP_LAYERS,
-            },
-        );
+        this.size = safeSize;
+        this.backing = acquireHeightMap(device, safeSize, data);
+        this.texture = this.backing.texture;
     }
 
     dispose(): void {
-        this.texture.destroy?.();
+        if (this.disposed) return;
+        this.disposed = true;
+        releaseHeightMap(this.device, this.size, this.data, this.backing);
     }
 }
