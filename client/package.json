@@ -87,14 +87,6 @@
       },
       {
         "files": [
-          "common/utils/*.js"
-        ],
-        "rules": {
-          "strict": "off"
-        }
-      },
-      {
-        "files": [
           "game/audio/**/*.{ts,tsx}",
           "game/login/**/*.{ts,tsx}",
           "game/menu/**/*.{ts,tsx}",
