@@ -24,6 +24,14 @@ const transparentPhaseSource = readFileSync(
     new URL("../render/webgpu/actor/WebGPUTransparentActorPhase.ts", import.meta.url),
     "utf8",
 );
+const playerOpaqueSource = readFileSync(
+    new URL("../render/webgpu/player/WebGPUPlayerOpaqueComparison.ts", import.meta.url),
+    "utf8",
+);
+const playerAlphaSource = readFileSync(
+    new URL("../render/webgpu/player/WebGPUPlayerAlphaComparison.ts", import.meta.url),
+    "utf8",
+);
 
 // Canvas must delegate the complete dynamic comparison lifecycle to one installer.
 assert.match(canvasSource, /installWebGPUDynamicComparisons/);
@@ -125,6 +133,17 @@ for (const source of [opaquePhaseSource, transparentPhaseSource]) {
 }
 assert.match(opaquePhaseSource, /getWebGPUOpaqueActorPhaseDiagnostics/);
 assert.match(transparentPhaseSource, /getWebGPUTransparentActorPhaseDiagnostics/);
+
+// Player opaque/alpha runtimes must use the shared height/buffer helpers rather
+// than maintaining their former local duplicate maps.
+for (const source of [playerOpaqueSource, playerAlphaSource]) {
+    assert.match(source, /WebGPUDynamicHeightBindGroupCache/);
+    assert.match(source, /WebGPUGrowableBufferCache/);
+    assert.match(source, /heightCache\?\.dispose\(\)/);
+    assert.match(source, /instanceCache\?\.dispose\(\)/);
+    assert.doesNotMatch(source, /new Map<number, HeightGpuResources>/);
+    assert.doesNotMatch(source, /new Map<string, InstanceGpuResources>/);
+}
 
 // The pass tracker counts GPU submissions while preserving ordinary methods.
 let setPipelineCalls = 0;
