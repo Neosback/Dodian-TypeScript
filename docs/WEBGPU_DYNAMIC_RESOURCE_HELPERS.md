@@ -26,15 +26,15 @@ Current adoption matrix:
 | --- | --- | --- |
 | Player opaque | yes | yes |
 | Player alpha | yes | yes |
-| NPC opaque | pending | pending |
-| NPC alpha | pending | pending |
+| NPC opaque | yes | yes |
+| NPC alpha | yes | yes |
 | Attached GFX | pending | pending |
 | World GFX | pending | pending |
 | Projectile | pending | pending |
 
-The player opaque/alpha migration is complete. Their geometry caches, shader modules, pipeline states, capture hooks, instance keys, and draw ordering remain unchanged.
+The player and NPC opaque/alpha migrations are complete. Their geometry caches, shader modules, pipeline states, capture hooks, instance keys, and draw ordering remain unchanged.
 
-The remaining K2 work should continue one category at a time, with a diff audit after each pair/path.
+The remaining K2 work should continue one category at a time, with a diff audit after each path.
 
 ## Shared signed height-map textures
 
@@ -126,6 +126,26 @@ The following remain local and unchanged:
 - capture timing
 - registry order
 
+## NPC adoption
+
+`WebGPUNpcOpaqueRuntime` and `WebGPUNpcAlphaRuntime` now use the same two shared helpers for height bind groups and instance vertex buffers.
+
+The migration removes the NPC-local `HeightGpuResources` and `InstanceGpuResources` maps while preserving:
+
+- current-pose geometry from `DynamicNpcAnimLoader`
+- action/movement/layered sequence selection
+- varbit/varp morph resolution
+- authoritative actor-record conversion
+- unbatched NPC coverage
+- world-view transforms and deck-height handling
+- opaque front-to-back batching
+- transparent back-to-front sequential ordering
+- cull variants
+- alpha blend/depth behavior
+- registry order
+
+Geometry cache ownership remains separate between opaque and alpha NPC paths.
+
 ## What remains category-specific
 
 This checkpoint does not merge:
@@ -162,11 +182,11 @@ Those differences are semantic rather than allocation boilerplate and should rem
 - height bind-group reuse for stable source identity
 - replacement when source identity changes
 - release diagnostics
-- player opaque and alpha both import/use the shared helper classes
-- the old player-local height/instance resource maps are absent
+- player opaque/alpha and NPC opaque/alpha all import/use the shared helper classes
+- the old player/NPC local height/instance resource maps are absent
 
 Both tests are already part of `test:webgpu-foundation`, so no package-script change is required.
 
 ## Next step
 
-Continue K2 with NPC opaque and alpha, preserving their current-pose geometry ownership and all shader/pipeline behavior. After the NPC pair is audited, migrate attached GFX, world GFX, and projectiles in separate small steps.
+Continue K2 with attached GFX. After that path is audited, migrate world GFX and projectiles in separate small steps.
