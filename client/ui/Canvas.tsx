@@ -2,25 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
-import {
-    installWebGPUAttachedGfxComparison,
-    installWebGPUNpcAttachedGfxAlphaBoundary,
-    installWebGPUPlayerAttachedGfxAlphaBoundary,
-} from "../render/webgpu/gfx/WebGPUAttachedGfxComparison";
-import {
-    installWebGPUWorldGfxAlphaBoundary,
-    installWebGPUWorldGfxComparison,
-} from "../render/webgpu/gfx/WebGPUWorldGfxComparison";
-import { installWebGPUNpcAlphaComparison } from "../render/webgpu/npc/WebGPUNpcAlphaComparison";
-import { installWebGPUNpcOpaqueComparison } from "../render/webgpu/npc/WebGPUNpcOpaqueComparison";
-import { installWebGPUPlayerAlphaComparison } from "../render/webgpu/player/WebGPUPlayerAlphaComparison";
-import { installWebGPUPlayerOpaqueCaptureBoundary } from "../render/webgpu/player/WebGPUPlayerOpaqueCaptureBoundary";
-import { installWebGPUPlayerOpaqueComparison } from "../render/webgpu/player/WebGPUPlayerOpaqueComparison";
-import { installWebGPUPlayerOpaquePassBoundaryGuard } from "../render/webgpu/player/WebGPUPlayerOpaquePassBoundary";
-import {
-    installWebGPUProjectileAlphaBoundary,
-    installWebGPUProjectileComparison,
-} from "../render/webgpu/projectile/WebGPUProjectileComparison";
+import { installWebGPUDynamicComparisons } from "../render/webgpu/dynamic/WebGPUDynamicComparisonLifecycle";
 
 export interface CanvasProps {
     renderer: Renderer;
@@ -35,40 +17,14 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
             return;
         }
         let active = true;
-        let restoreNpcComparison: (() => void) | undefined;
-        let restoreNpcAlphaComparison: (() => void) | undefined;
-        let restorePlayerComparison: (() => void) | undefined;
-        let restorePlayerCaptureBoundary: (() => void) | undefined;
-        let restorePlayerAlphaComparison: (() => void) | undefined;
-        let restoreAttachedGfxComparison: (() => void) | undefined;
-        let restoreWorldGfxComparison: (() => void) | undefined;
-        let restoreProjectileComparison: (() => void) | undefined;
+        let restoreDynamicComparisons: (() => void) | undefined;
         host.appendChild(renderer.canvas);
         renderer.attachResizeObserver();
         requestAnimationFrame(() => renderer.forceResize());
 
         renderer.initOnce().then(() => {
             if (!active) return;
-            installWebGPUPlayerOpaquePassBoundaryGuard();
-            // Install NPC comparison before the player wrapper so the opaque
-            // actor order is static scene -> NPC -> player, matching WebGL2.
-            restoreNpcComparison = installWebGPUNpcOpaqueComparison(renderer);
-            restorePlayerComparison = installWebGPUPlayerOpaqueComparison(renderer);
-            // Attached opaque GFX is installed after players. World-tile GFX
-            // wraps that boundary next, then projectiles remain the final opaque
-            // actor-effect phase for each comparison frame.
-            restoreAttachedGfxComparison = installWebGPUAttachedGfxComparison(renderer);
-            restoreWorldGfxComparison = installWebGPUWorldGfxComparison(renderer);
-            restoreProjectileComparison = installWebGPUProjectileComparison(renderer);
-            restorePlayerCaptureBoundary = installWebGPUPlayerOpaqueCaptureBoundary(renderer);
-            // Transparent ordering is static -> NPC -> NPC GFX -> world GFX ->
-            // player -> player GFX -> projectiles, matching the live WebGL phases.
-            restoreNpcAlphaComparison = installWebGPUNpcAlphaComparison(renderer);
-            installWebGPUNpcAttachedGfxAlphaBoundary();
-            installWebGPUWorldGfxAlphaBoundary();
-            restorePlayerAlphaComparison = installWebGPUPlayerAlphaComparison(renderer);
-            installWebGPUPlayerAttachedGfxAlphaBoundary();
-            installWebGPUProjectileAlphaBoundary();
+            restoreDynamicComparisons = installWebGPUDynamicComparisons(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
                 host.appendChild(comparisonCanvas);
@@ -78,22 +34,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
 
         return () => {
             active = false;
-            restorePlayerAlphaComparison?.();
-            restorePlayerAlphaComparison = undefined;
-            restoreNpcAlphaComparison?.();
-            restoreNpcAlphaComparison = undefined;
-            restorePlayerCaptureBoundary?.();
-            restorePlayerCaptureBoundary = undefined;
-            restoreProjectileComparison?.();
-            restoreProjectileComparison = undefined;
-            restoreWorldGfxComparison?.();
-            restoreWorldGfxComparison = undefined;
-            restoreAttachedGfxComparison?.();
-            restoreAttachedGfxComparison = undefined;
-            restorePlayerComparison?.();
-            restorePlayerComparison = undefined;
-            restoreNpcComparison?.();
-            restoreNpcComparison = undefined;
+            restoreDynamicComparisons?.();
+            restoreDynamicComparisons = undefined;
             renderer.stop();
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas?.parentNode === host) host.removeChild(comparisonCanvas);
