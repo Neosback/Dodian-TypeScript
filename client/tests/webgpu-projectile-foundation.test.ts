@@ -103,6 +103,10 @@ const rollIndex = projectileVertex.indexOf("let rollAngle");
 const pitchIndex = projectileVertex.indexOf("let pitchAngle");
 const yawIndex = projectileVertex.indexOf("let yawAngle");
 assert.ok(rollIndex >= 0 && pitchIndex > rollIndex && yawIndex > pitchIndex);
+// Match GLSL row-vector rotationY signs exactly: x' = x*c + z*s,
+// z' = -x*s + z*c. A sign inversion mirrors projectile yaw.
+assert.match(projectileVertex, /pitchRotated\.x \* yawC \+ pitchRotated\.z \* yawS/);
+assert.match(projectileVertex, /-pitchRotated\.x \* yawS \+ pitchRotated\.z \* yawC/);
 assert.match(projectileVertex, /projectileTransform\.xy \+ input\.projectileRotation\.zw/);
 assert.match(projectileVertex, /localPos\.y -= getGfxHeightInterp\(tilePos, plane\)/);
 assert.match(projectileVertex, /localPos\.y -= input\.projectileMisc\.x/);
