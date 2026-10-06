@@ -48,6 +48,10 @@ const worldGfxSource = readFileSync(
     new URL("../render/webgpu/gfx/WebGPUWorldGfxComparison.ts", import.meta.url),
     "utf8",
 );
+const projectileSource = readFileSync(
+    new URL("../render/webgpu/projectile/WebGPUProjectileComparison.ts", import.meta.url),
+    "utf8",
+);
 
 // Canvas must delegate the complete dynamic comparison lifecycle to one installer.
 assert.match(canvasSource, /installWebGPUDynamicComparisons/);
@@ -150,7 +154,7 @@ for (const source of [opaquePhaseSource, transparentPhaseSource]) {
 assert.match(opaquePhaseSource, /getWebGPUOpaqueActorPhaseDiagnostics/);
 assert.match(transparentPhaseSource, /getWebGPUTransparentActorPhaseDiagnostics/);
 
-// Migrated actor/GFX runtimes must use the shared height/buffer helpers rather
+// Migrated dynamic runtimes must use the shared height/buffer helpers rather
 // than maintaining their former local duplicate maps.
 for (const source of [
     playerOpaqueSource,
@@ -159,6 +163,7 @@ for (const source of [
     npcAlphaSource,
     attachedGfxSource,
     worldGfxSource,
+    projectileSource,
 ]) {
     assert.match(source, /WebGPUDynamicHeightBindGroupCache/);
     assert.match(source, /WebGPUGrowableBufferCache/);
@@ -167,6 +172,14 @@ for (const source of [
     assert.doesNotMatch(source, /new Map<number, HeightGpuResources>/);
     assert.doesNotMatch(source, /new Map<string, InstanceGpuResources>/);
 }
+
+// The projectile-specific 48-byte ABI remains local to the projectile runtime.
+assert.match(projectileSource, /WEBGPU_PROJECTILE_INSTANCE_FLOATS = 12/);
+assert.match(
+    projectileSource,
+    /WEBGPU_PROJECTILE_INSTANCE_STRIDE_BYTES = WEBGPU_PROJECTILE_INSTANCE_FLOATS \* 4/,
+);
+assert.match(projectileSource, /WEBGPU_PROJECTILE_ALPHA_PIPELINE_STATE[\s\S]*depthWriteEnabled: false/);
 
 // The pass tracker counts GPU submissions while preserving ordinary methods.
 let setPipelineCalls = 0;
