@@ -29,7 +29,7 @@ import {
     WEBGPU_PLAYER_INSTANCE_STRIDE_BYTES,
     packWebGPUPlayerInstanceData,
 } from "../player/WebGPUPlayerOpaqueComparison";
-import { WEBGPU_PLAYER_ALPHA_SHADER } from "../player/WebGPUPlayerAlphaShader";
+import { WEBGPU_GFX_SHADER } from "./WebGPUGfxShader";
 
 export type WebGPUAttachedGfxKind = "player" | "npc";
 export type WebGPUAttachedGfxPass = "opaque" | "alpha";
@@ -156,7 +156,6 @@ function cacheGeometry(
         state.geometryByKey.set(key, existing);
         return existing;
     }
-
     const geometry =
         pass === "opaque"
             ? createDynamicActorGeometry(
@@ -207,7 +206,6 @@ export function orderWebGPUAttachedGfxEntriesLikeWebGL(
         }
         group.push(entry);
     }
-
     const ordered: OrderedAttachmentEntry[] = [];
     for (const group of spotGroups.values()) {
         const yOffsetGroups = new Map<number, OrderedAttachmentEntry[]>();
@@ -237,8 +235,9 @@ function createAttachedGfxDraw(
     if (inst.startTimeMs == null || typeof inst.lastSoundFrame !== "number") return undefined;
     const spotFrame = inst.lastSoundFrame | 0;
     const spotId = inst.spotId | 0;
-    const transparent = pass === "alpha";
-    const raw = host.gfxRenderer?.getCache?.().ensureFrameGeometry(spotId, spotFrame, transparent);
+    const raw = host.gfxRenderer
+        ?.getCache?.()
+        .ensureFrameGeometry(spotId, spotFrame, pass === "alpha");
     if (!raw || raw.vertices.byteLength === 0 || raw.indices.length === 0) return undefined;
 
     const wordOffset = (actorRecordIndex | 0) * DYNAMIC_ACTOR_WEBGL_RECORD_WORDS;
@@ -248,7 +247,6 @@ function createAttachedGfxDraw(
     ) {
         return undefined;
     }
-
     const decoded = decodeDynamicActorWebGLRecord(host.actorRenderData, wordOffset);
     let serverId: number | undefined;
     let worldViewId = -1;
@@ -278,8 +276,8 @@ function createAttachedGfxDraw(
             localY: decoded.localY,
             plane: decoded.plane,
             rotation: decoded.rotation,
-            // WebGL subtracts positive u_modelYOffset. The shared WebGPU actor
-            // path adds modelYOffset, so normalize the sign here.
+            // WebGL subtracts positive u_modelYOffset. The shared WebGPU GFX
+            // shader adds modelYOffset, so normalize the sign here.
             modelYOffset: -entry.yOffsetUnits,
         },
         animation: {
@@ -290,7 +288,6 @@ function createAttachedGfxDraw(
         colorOverride: decoded.colorOverride,
         geometryKey: geometry.key,
     };
-
     return {
         frameToken: state.currentFrameToken,
         mapX: map.mapX | 0,
@@ -342,8 +339,8 @@ function captureAttachedGfxPass(
     const mgr = host.gfxManager;
     if (!mgr) return;
 
-    // World-tile GFX intentionally remain out of G1. They have independent
-    // placement records and will be migrated separately.
+    // World-tile GFX intentionally remain out of G1 and are handled by the G2
+    // world-GFX comparison using their independent placement records.
     if (offsets.player !== undefined && offsets.player !== -1) {
         const playerEntries: OrderedAttachmentEntry[] = mgr
             .getAttachedPlayersForMap(map)
@@ -363,7 +360,6 @@ function captureAttachedGfxPass(
             playerEntries,
         );
     }
-
     if (offsets.npc !== undefined && offsets.npc !== -1) {
         const npcEntries: OrderedAttachmentEntry[] = mgr
             .getAttachedNpcsForMap(map)
@@ -418,7 +414,6 @@ class WebGPUAttachedGfxRuntime {
         if (!device || !sceneLayout || !mapLayout || !textureLayout || !format) {
             throw new Error("Static WebGPU renderer layouts are unavailable");
         }
-
         const heightLayout = device.createBindGroupLayout({
             label: "attached-gfx-height-bind-group-layout",
             entries: [
@@ -434,7 +429,7 @@ class WebGPUAttachedGfxRuntime {
             ],
         });
         const module = await this.staticRenderer.backend.compileShaderModule(
-            WEBGPU_PLAYER_ALPHA_SHADER,
+            WEBGPU_GFX_SHADER,
             "attached-gfx-foundation",
         );
         const pipelineLayout = device.createPipelineLayout({
@@ -443,7 +438,7 @@ class WebGPUAttachedGfxRuntime {
         });
         const vertex = {
             module,
-            entryPoint: "vsPlayerOpaque",
+            entryPoint: "vsGfx",
             buffers: [
                 {
                     arrayStride: 12,
@@ -465,12 +460,11 @@ class WebGPUAttachedGfxRuntime {
                 },
             ],
         };
-
         this.opaquePipeline = device.createRenderPipeline({
             label: "attached-gfx-opaque-pipeline",
             layout: pipelineLayout,
             vertex,
-            fragment: { module, entryPoint: "fsPlayerOpaque", targets: [{ format }] },
+            fragment: { module, entryPoint: "fsGfxOpaque", targets: [{ format }] },
             primitive: {
                 topology: "triangle-list",
                 frontFace: "ccw",
@@ -488,7 +482,7 @@ class WebGPUAttachedGfxRuntime {
             vertex,
             fragment: {
                 module,
-                entryPoint: "fsPlayerAlpha",
+                entryPoint: "fsGfxAlpha",
                 targets: [{ format, blend: WEBGPU_ATTACHED_GFX_ALPHA_PIPELINE_STATE.blend }],
             },
             primitive: {
@@ -502,7 +496,6 @@ class WebGPUAttachedGfxRuntime {
                 depthCompare: WEBGPU_ATTACHED_GFX_ALPHA_PIPELINE_STATE.depthCompare,
             },
         });
-
         this.device = device;
         this.heightLayout = heightLayout;
         this.ready = true;
@@ -522,7 +515,6 @@ class WebGPUAttachedGfxRuntime {
             existing.vertexBuffer.destroy?.();
             existing.indexBuffer.destroy?.();
         }
-
         const vertexBuffer = device.createBuffer({
             label: `${draw.geometry.key}-vertices`,
             size: alignedBufferSize(sourcePass.vertices.byteLength),
@@ -557,7 +549,6 @@ class WebGPUAttachedGfxRuntime {
         const existing = this.heights.get(id);
         if (existing && existing.source === source && existing.size === size) return existing;
         if (existing) existing.heightMap.dispose();
-
         const heightMap = new WebGPUHeightMapResources(device, size, source);
         const bindGroup = device.createBindGroup({
             label: `attached-gfx-${draw.mapX}-${draw.mapY}-height-bind-group`,
@@ -618,7 +609,6 @@ class WebGPUAttachedGfxRuntime {
         const mapsById = rendererAny.mapsById as Map<number, any> | undefined;
         const pipeline = pass === "opaque" ? this.opaquePipeline : this.alphaPipeline;
         if (!mapsById || !pipeline) return;
-
         passEncoder.setPipeline(pipeline);
         for (const draw of draws) {
             if (draw.frameToken !== frame.currentTime) continue;
@@ -626,7 +616,6 @@ class WebGPUAttachedGfxRuntime {
             const height = this.getHeight(draw);
             const geometry = this.getGeometry(draw, pass);
             if (!mapResources || !height || !geometry || geometry.indexCount <= 0) continue;
-
             passEncoder.setBindGroup(1, mapResources.sharedMapBindGroup);
             passEncoder.setBindGroup(3, height.bindGroup);
             // Match current WebGL GFX behavior: parent actor placement is reused,
@@ -635,7 +624,6 @@ class WebGPUAttachedGfxRuntime {
             const bufferKey = `${pass}:${draw.mapX}:${draw.mapY}:${draw.geometry.key}:${draw.attachmentKind}:${draw.instance.identity.actorId}`;
             const instanceBuffer = this.getInstanceBuffer(bufferKey, instanceData);
             if (!instanceBuffer) continue;
-
             passEncoder.setVertexBuffer(0, geometry.vertexBuffer);
             passEncoder.setVertexBuffer(1, instanceBuffer);
             passEncoder.setIndexBuffer(geometry.indexBuffer, "uint32");
@@ -756,10 +744,9 @@ export function installWebGPUPlayerAttachedGfxAlphaBoundary(): void {
 export function installWebGPUAttachedGfxComparison(renderer: Renderer): () => void {
     if (!comparisonRequested()) return () => {};
     const host = renderer as WebGLOsrsRenderer;
-    const frame = (host as any).sceneFrameDescription as SceneFrameDescription | undefined;
+    const frame = host.sceneFrameDescription as SceneFrameDescription | undefined;
     const gfxRenderer = host.gfxRenderer as any;
     if (!frame || !gfxRenderer || typeof gfxRenderer.renderMapPass !== "function") return () => {};
-
     patchOpaquePostPlayerBoundary();
     const existing = hostStates.get(host);
     if (existing) return existing.restoreCapture ?? (() => {});
