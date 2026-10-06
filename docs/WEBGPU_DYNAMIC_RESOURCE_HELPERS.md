@@ -105,6 +105,22 @@ Diagnostics:
 - releases
 - live entries
 
+## Device-level dynamic diagnostics
+
+The post-K2 audit adds `getWebGPUDynamicResourceDiagnostics(device)` for browser A/B profiling.
+
+The snapshot aggregates currently live dynamic caches by their runtime label and reports:
+
+- instance-buffer cache count
+- allocations, reuses, grows, writes, and destroys
+- uploaded bytes
+- live buffer count and capacity
+- height bind-group cache count
+- allocations, reuses, replacements, releases, and live entries
+- cumulative shared height-texture allocation/reuse/release/destroy counters
+
+Disposed caches unregister from the live snapshot. Shared texture counters remain cumulative for the lifetime of the GPU device.
+
 ## Player adoption
 
 `WebGPUPlayerOpaqueRuntime` and `WebGPUPlayerAlphaRuntime` now use:
@@ -242,11 +258,21 @@ Those differences are semantic rather than allocation boilerplate and should rem
 - release diagnostics
 - every migrated dynamic runtime imports/uses the shared helper classes
 - old local height/instance resource maps are absent from every migrated runtime
+- migrated runtimes no longer directly import `WebGPUHeightMapResources` or `WEBGPU_HEIGHT_MAP_LAYERS`
 - the projectile-specific 48-byte instance ABI remains intact
 - projectile alpha still has depth writes disabled
+- device-level resource diagnostics while caches are live
+- disposed caches disappear from the live snapshot
+- cumulative shared-height-texture counters remain correct after disposal
 
 Both tests are already part of `test:webgpu-foundation`, so no package-script change is required.
 
+## Post-K2 audit result
+
+Checkpoint L confirms there is no remaining duplicate dynamic height-map ownership or growable instance-buffer implementation in the seven migrated dynamic runtimes. Geometry ownership remains intentionally category-specific.
+
+The detailed audit is recorded in `WEBGPU_POST_K2_AUDIT.md`.
+
 ## Next step
 
-Run one final post-K2 consolidation audit across all migrated dynamic runtimes. The audit should confirm no residual duplicate height/instance allocation code remains and decide the next rendering milestone without changing renderer behavior.
+Move to dynamic picking/highlight parity. Static WebGPU picking already exists, and dynamic picking is now the clearest contained feature gap to close before beginning the controlled live WebGPU renderer cutover.
