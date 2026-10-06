@@ -164,18 +164,20 @@ When a readback is already in flight:
 
 This follows the same asynchronous comparison philosophy as static picking while keeping the dynamic controller isolated.
 
-## Request-time identity snapshot
+## Submission-time identity snapshot
 
 Player interaction identity is map-local:
 
 - actor upload writes `0x8000 + indexInMap`
 - `PlayerRenderer.getRenderPlayersForMap(map)` exposes the same ordered list used for that upload
 
-M2 freezes the `(mapId, interactionId) -> actorId/serverId` mapping synchronously when the pick request is created, before shader initialization, queue delay, or GPU readback can yield to another frame.
+`SceneFrameDescription` is allocated once and mutated each frame. A queued pick therefore must not freeze actor identity when the API call is first made and later combine that old identity with newer frame/actor buffers.
 
-That prevents a delayed readback from interpreting an old player slot using a newer frame's player order.
+M2 captures the `(mapId, interactionId) -> actorId/serverId` mapping at the GPU submission boundary, after any asynchronous shader initialization and immediately before scene uniforms and the current actor phase buffers are replayed.
 
-NPC resolution is also frozen at request time from the server-linked ECS identities, keyed by the NPC server id carried in the pick payload.
+That mapping is then retained across `mapAsync`, so the returned pixel cannot be interpreted using a later frame's player slot ordering.
+
+NPC resolution is captured at the same submission boundary from the server-linked ECS identities, keyed by the NPC server id carried in the pick payload.
 
 The resolved comparison result is:
 
@@ -251,7 +253,7 @@ M2 is still comparison infrastructure only.
 - one-pixel scissor/readback
 - 256-byte readback-row alignment
 - newest-request-wins queue semantics
-- request-time player/NPC identity freezing
+- submission-time player/NPC identity freezing
 - player `0x8000 + slot` resolution
 - NPC server-id resolution
 - opaque NPC -> opaque player -> alpha NPC -> alpha player replay order
