@@ -109,10 +109,19 @@ export function installWebGPUPickingParityRecorder(renderer: Renderer): () => vo
     if (!host) return () => {};
 
     const raycaster = host.sceneRaycaster as any;
+    const hostMethods = host as any;
     const previousRaycast = raycaster.raycast as (
         ...args: any[]
     ) => SceneRaycastHit[];
-    if (typeof previousRaycast !== "function") return () => {};
+    const previousCheckInteractions = hostMethods.checkInteractions as (
+        ...args: any[]
+    ) => void;
+    if (
+        typeof previousRaycast !== "function" ||
+        typeof previousCheckInteractions !== "function"
+    ) {
+        return () => {};
+    }
 
     const diagnostics: MutableParityDiagnostics = {
         installed: true,
@@ -124,10 +133,20 @@ export function installWebGPUPickingParityRecorder(renderer: Renderer): () => vo
 
     let active = true;
     let parityBusy = false;
+    let insideCheckInteractions = false;
+
+    const checkInteractionsWrapper = function (this: unknown, ...args: any[]): void {
+        insideCheckInteractions = true;
+        try {
+            previousCheckInteractions.apply(this, args);
+        } finally {
+            insideCheckInteractions = false;
+        }
+    };
 
     const raycastWrapper = function (this: unknown, ...args: any[]): SceneRaycastHit[] {
         const hits = previousRaycast.apply(this, args);
-        if (!active || parityBusy) return hits;
+        if (!active || parityBusy || !insideCheckInteractions) return hits;
 
         const point = resolveInteractionPoint(host);
         if (!point || !host.osrsClient.camera.containsScreenPoint(point.x, point.y)) {
@@ -165,12 +184,16 @@ export function installWebGPUPickingParityRecorder(renderer: Renderer): () => vo
         return hits;
     };
 
+    hostMethods.checkInteractions = checkInteractionsWrapper;
     raycaster.raycast = raycastWrapper;
 
     return () => {
         active = false;
         if (raycaster.raycast === raycastWrapper) {
             raycaster.raycast = previousRaycast;
+        }
+        if (hostMethods.checkInteractions === checkInteractionsWrapper) {
+            hostMethods.checkInteractions = previousCheckInteractions;
         }
         diagnostics.installed = false;
         diagnosticsByRenderer.delete(renderer);
