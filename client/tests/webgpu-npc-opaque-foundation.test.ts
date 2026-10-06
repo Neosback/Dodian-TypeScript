@@ -25,6 +25,13 @@ assert.match(WEBGPU_NPC_OPAQUE_SHADER, /const PRIORITY_LAYER_EPSILON: f32 = 0\.0
 assert.match(WEBGPU_NPC_OPAQUE_SHADER, /const TOP_PRIORITY_EXTRA_BIAS: f32 = 0\.01/);
 assert.match(WEBGPU_NPC_OPAQUE_SHADER, /applyHslOverride\(rawHsl, actorHslOverride\)/);
 
+// NPC/WebGL depth semantics differ from player equipment layers. Plane and face
+// priority are applied directly in view space before projection, so NPCs must
+// not retain the player's depthLayerClip-only projection path.
+assert.match(WEBGPU_NPC_OPAQUE_SHADER, /viewPos\.z \+= f32\(plane\) \* 0\.01/);
+assert.match(WEBGPU_NPC_OPAQUE_SHADER, /viewPos\.z \+= layer \* PRIORITY_LAYER_EPSILON/);
+assert.doesNotMatch(WEBGPU_NPC_OPAQUE_SHADER, /depthLayerClip/);
+
 // Comparison capture must convert the authoritative actor record to the neutral
 // instance ABI instead of sampling the WebGL actor texture in WGSL.
 assert.match(npcComparisonSource, /decodeDynamicActorWebGLRecord/);
