@@ -30,11 +30,9 @@ Current adoption matrix:
 | NPC alpha | yes | yes |
 | Attached GFX | yes | yes |
 | World GFX | yes | yes |
-| Projectile | pending | pending |
+| Projectile | yes | yes |
 
-The player, NPC, attached-GFX, and world-GFX migrations are complete. Their geometry caches, shader modules, pipeline states, capture hooks, instance keys, and draw ordering remain unchanged.
-
-The remaining K2 work is the projectile path, followed by a final consolidation audit.
+K2 is complete. Player, NPC, attached-GFX, world-GFX, and projectile runtimes now use the shared low-level resource helpers. Their geometry caches, shader modules, pipeline states, capture hooks, instance formats/keys, and draw ordering remain category-specific and unchanged.
 
 ## Shared signed height-map textures
 
@@ -48,7 +46,7 @@ The first owner performs the `r16sint` texture allocation and upload. Additional
 
 `dispose()` releases one reference. The GPU texture is destroyed only after the last owner releases it.
 
-This is active across existing dynamic comparison runtimes because they construct `WebGPUHeightMapResources` from the same map height source. As category-local bind-group caches are replaced during K2, they continue to reference the same shared texture through `WebGPUDynamicHeightBindGroupCache`.
+This is active across existing dynamic comparison runtimes because they construct `WebGPUHeightMapResources` from the same map height source. Category-local bind-group caches reference the same shared texture through `WebGPUDynamicHeightBindGroupCache`.
 
 Diagnostics are exposed through:
 
@@ -185,6 +183,27 @@ The migration removes the world-GFX-local `HeightGpuResources` and `InstanceGpuR
 
 World GFX remains a semantically separate runtime from actor-attached GFX even though both now share the same low-level allocation helpers.
 
+## Projectile adoption
+
+`WebGPUProjectileRuntime` now uses the shared height bind-group and growable instance-buffer helpers for opaque and alpha projectile submissions.
+
+The migration removes the projectile-local `HeightGpuResources` and `InstanceGpuResources` maps while preserving:
+
+- the projectile-specific 48-byte instance ABI (`12 * float32`)
+- authoritative signed local position and quantized yaw/pitch/roll decoding
+- fractional sub-tile X/Y placement
+- renderer-owned ground-relative model Y offset resolution
+- current map membership from `ProjectileManager`
+- `(spotId, frame, pass)` geometry caching
+- front-to-back opaque and back-to-front alpha map traversal
+- cull/no-cull pipeline selection from `cullBackFace`
+- opaque depth writes enabled
+- projectile-alpha depth writes disabled
+- projectile phase ordering after GFX
+- existing instance-buffer keys based on pass/map/geometry/debug ID
+
+The shared growable buffer helper stores the packed projectile data without changing its 48-byte layout or interpreting projectile fields.
+
 ## What remains category-specific
 
 This checkpoint does not merge:
@@ -221,11 +240,13 @@ Those differences are semantic rather than allocation boilerplate and should rem
 - height bind-group reuse for stable source identity
 - replacement when source identity changes
 - release diagnostics
-- player opaque/alpha, NPC opaque/alpha, attached GFX, and world GFX all import/use the shared helper classes
-- the old local height/instance resource maps are absent from those migrated runtimes
+- every migrated dynamic runtime imports/uses the shared helper classes
+- old local height/instance resource maps are absent from every migrated runtime
+- the projectile-specific 48-byte instance ABI remains intact
+- projectile alpha still has depth writes disabled
 
 Both tests are already part of `test:webgpu-foundation`, so no package-script change is required.
 
 ## Next step
 
-Complete K2 with projectiles as the final resource-helper adoption path. After that, run one final resource-consolidation audit before moving to the next rendering feature.
+Run one final post-K2 consolidation audit across all migrated dynamic runtimes. The audit should confirm no residual duplicate height/instance allocation code remains and decide the next rendering milestone without changing renderer behavior.
