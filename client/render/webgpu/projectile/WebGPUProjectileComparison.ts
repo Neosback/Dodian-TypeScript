@@ -16,7 +16,6 @@ import {
     WEBGPU_BUFFER_USAGE,
     WEBGPU_SHADER_STAGE,
     type WebGPUBindGroupLayoutLike,
-    type WebGPUBindGroupLike,
     type WebGPUBufferLike,
     type WebGPUDeviceLike,
     type WebGPURenderPassEncoderLike,
@@ -24,9 +23,9 @@ import {
 } from "../../backend/WebGPUPlatform";
 import { WebGPUStaticSceneRenderer } from "../WebGPUStaticSceneRenderer";
 import {
-    WEBGPU_HEIGHT_MAP_LAYERS,
-    WebGPUHeightMapResources,
-} from "../loc/WebGPUHeightMapResources";
+    WebGPUDynamicHeightBindGroupCache,
+    WebGPUGrowableBufferCache,
+} from "../dynamic/WebGPUDynamicResourceHelpers";
 import { WEBGPU_PROJECTILE_SHADER } from "./WebGPUProjectileShader";
 
 export type WebGPUProjectilePass = "opaque" | "alpha";
@@ -72,18 +71,6 @@ interface GeometryGpuResources {
     vertexBuffer: WebGPUBufferLike;
     indexBuffer: WebGPUBufferLike;
     indexCount: number;
-}
-
-interface HeightGpuResources {
-    source: Int16Array;
-    size: number;
-    heightMap: WebGPUHeightMapResources;
-    bindGroup: WebGPUBindGroupLike;
-}
-
-interface InstanceGpuResources {
-    buffer: WebGPUBufferLike;
-    capacityBytes: number;
 }
 
 interface ProjectileGroup {
@@ -325,7 +312,6 @@ function collectProjectileDraws(
 
 class WebGPUProjectileRuntime {
     private device?: WebGPUDeviceLike;
-    private heightLayout?: WebGPUBindGroupLayoutLike;
     private opaqueCullPipeline?: WebGPURenderPipelineLike;
     private opaqueNoCullPipeline?: WebGPURenderPipelineLike;
     private alphaCullPipeline?: WebGPURenderPipelineLike;
@@ -334,8 +320,8 @@ class WebGPUProjectileRuntime {
     private ready = false;
     private failed = false;
     private geometry = new Map<string, GeometryGpuResources>();
-    private heights = new Map<number, HeightGpuResources>();
-    private instances = new Map<string, InstanceGpuResources>();
+    private heightCache?: WebGPUDynamicHeightBindGroupCache;
+    private instanceCache?: WebGPUGrowableBufferCache;
     readonly geometryByKey = new Map<string, DynamicActorGeometry>();
 
     constructor(private readonly staticRenderer: WebGPUStaticSceneRenderer) {}
@@ -459,7 +445,15 @@ class WebGPUProjectileRuntime {
             true,
         );
         this.device = device;
-        this.heightLayout = heightLayout;
+        this.heightCache = new WebGPUDynamicHeightBindGroupCache(
+            device,
+            heightLayout,
+            "projectile",
+        );
+        this.instanceCache = new WebGPUGrowableBufferCache(
+            device,
+            "projectile-instance",
+        );
         this.ready = true;
     }
 
@@ -499,61 +493,17 @@ class WebGPUProjectileRuntime {
         return resources;
     }
 
-    private getHeight(draw: WebGPUProjectileDrawSnapshot): HeightGpuResources | undefined {
-        const device = this.device;
-        const heightLayout = this.heightLayout;
-        if (!device || !heightLayout) return undefined;
+    private getHeight(draw: WebGPUProjectileDrawSnapshot) {
         const mapAny = draw.map as any;
-        const source = mapAny.heightMapData as Int16Array | undefined;
-        const size = mapAny.heightMapSize | 0;
-        if (!source || !(size > 0)) return undefined;
-        const id = mapKey(draw.mapX, draw.mapY);
-        const existing = this.heights.get(id);
-        if (existing && existing.source === source && existing.size === size) return existing;
-        if (existing) existing.heightMap.dispose();
-        const heightMap = new WebGPUHeightMapResources(device, size, source);
-        const bindGroup = device.createBindGroup({
-            label: `projectile-${draw.mapX}-${draw.mapY}-height-bind-group`,
-            layout: heightLayout,
-            entries: [
-                {
-                    binding: 0,
-                    resource: heightMap.texture.createView({
-                        dimension: "2d-array",
-                        baseArrayLayer: 0,
-                        arrayLayerCount: WEBGPU_HEIGHT_MAP_LAYERS,
-                    }),
-                },
-            ],
-        });
-        const resources = { source, size, heightMap, bindGroup };
-        this.heights.set(id, resources);
-        return resources;
+        return this.heightCache?.get(
+            mapKey(draw.mapX, draw.mapY),
+            mapAny.heightMapData as Int16Array | undefined,
+            mapAny.heightMapSize | 0,
+        );
     }
 
     private getInstanceBuffer(key: string, data: Float32Array): WebGPUBufferLike | undefined {
-        const device = this.device;
-        if (!device || data.byteLength === 0) return undefined;
-        let resources = this.instances.get(key);
-        const required = alignedBufferSize(data.byteLength);
-        if (!resources || resources.capacityBytes < required) {
-            resources?.buffer.destroy?.();
-            const capacityBytes = Math.max(
-                required,
-                resources?.capacityBytes ? resources.capacityBytes * 2 : required,
-            );
-            resources = {
-                buffer: device.createBuffer({
-                    label: `${key}-instances`,
-                    size: capacityBytes,
-                    usage: WEBGPU_BUFFER_USAGE.VERTEX | WEBGPU_BUFFER_USAGE.COPY_DST,
-                }),
-                capacityBytes,
-            };
-            this.instances.set(key, resources);
-        }
-        device.queue.writeBuffer(resources.buffer, 0, data);
-        return resources.buffer;
+        return this.instanceCache?.getOrWrite(key, data);
     }
 
     draw(
@@ -611,12 +561,11 @@ class WebGPUProjectileRuntime {
         }
         this.geometry.clear();
         this.geometryByKey.clear();
-        for (const resources of this.heights.values()) resources.heightMap.dispose();
-        this.heights.clear();
-        for (const resources of this.instances.values()) resources.buffer.destroy?.();
-        this.instances.clear();
+        this.heightCache?.dispose();
+        this.heightCache = undefined;
+        this.instanceCache?.dispose();
+        this.instanceCache = undefined;
         this.device = undefined;
-        this.heightLayout = undefined;
         this.opaqueCullPipeline = undefined;
         this.opaqueNoCullPipeline = undefined;
         this.alphaCullPipeline = undefined;
