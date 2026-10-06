@@ -49,6 +49,13 @@ export interface WebGPUDynamicComparisonDiagnostics {
 
 const diagnosticsByRenderer = new WeakMap<Renderer, WebGPUDynamicComparisonDiagnostics>();
 
+function comparisonRequested(): boolean {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location?.search ?? "");
+    const value = params.get("webgpuTerrain")?.trim().toLowerCase();
+    return value === "1" || value === "true" || value === "compare" || value === "split";
+}
+
 /**
  * Install all dynamic WebGPU A/B comparison hooks from one authoritative place.
  *
@@ -58,6 +65,11 @@ const diagnosticsByRenderer = new WeakMap<Renderer, WebGPUDynamicComparisonDiagn
  * order whenever a new dynamic category is migrated.
  */
 export function installWebGPUDynamicComparisons(renderer: Renderer): () => void {
+    if (!comparisonRequested()) {
+        diagnosticsByRenderer.delete(renderer);
+        return () => {};
+    }
+
     const restore: Array<() => void> = [];
     const installSteps: string[] = [];
 
