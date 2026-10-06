@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
     WebGPUDynamicHeightBindGroupCache,
     WebGPUGrowableBufferCache,
+    getWebGPUDynamicResourceDiagnostics,
 } from "../render/webgpu/dynamic/WebGPUDynamicResourceHelpers";
 import {
     addWebGPUDynamicPhaseSample,
@@ -155,7 +156,7 @@ assert.match(opaquePhaseSource, /getWebGPUOpaqueActorPhaseDiagnostics/);
 assert.match(transparentPhaseSource, /getWebGPUTransparentActorPhaseDiagnostics/);
 
 // Migrated dynamic runtimes must use the shared height/buffer helpers rather
-// than maintaining their former local duplicate maps.
+// than maintaining or directly importing their former local height resources.
 for (const source of [
     playerOpaqueSource,
     playerAlphaSource,
@@ -171,6 +172,8 @@ for (const source of [
     assert.match(source, /instanceCache\?\.dispose\(\)/);
     assert.doesNotMatch(source, /new Map<number, HeightGpuResources>/);
     assert.doesNotMatch(source, /new Map<string, InstanceGpuResources>/);
+    assert.doesNotMatch(source, /WebGPUHeightMapResources/);
+    assert.doesNotMatch(source, /WEBGPU_HEIGHT_MAP_LAYERS/);
 }
 
 // The projectile-specific 48-byte ABI remains local to the projectile runtime.
@@ -267,10 +270,25 @@ assert.deepEqual(buffers.getDiagnostics(), {
     liveBuffers: 1,
     liveCapacityBytes: 40,
 });
+assert.deepEqual(getWebGPUDynamicResourceDiagnostics(resourceDevice).instanceBuffers, [
+    {
+        label: "dynamic-test",
+        cacheCount: 1,
+        allocations: 2,
+        reuses: 1,
+        grows: 1,
+        writes: 3,
+        destroys: 1,
+        bytesUploaded: 64,
+        liveBuffers: 1,
+        liveCapacityBytes: 40,
+    },
+]);
 buffers.dispose();
 assert.equal(createdBuffers[1].destroyed, true);
 assert.equal(buffers.getDiagnostics().liveBuffers, 0);
 assert.equal(buffers.getDiagnostics().destroys, 2);
+assert.deepEqual(getWebGPUDynamicResourceDiagnostics(resourceDevice).instanceBuffers, []);
 
 // Height bind-group helper reuses a stable source and replaces only when the
 // source identity or size changes. Underlying textures are ref-counted globally.
@@ -296,9 +314,35 @@ assert.deepEqual(heightCache.getDiagnostics(), {
     releases: 1,
     liveEntries: 1,
 });
+const liveHeightDiagnostics = getWebGPUDynamicResourceDiagnostics(resourceDevice);
+assert.deepEqual(liveHeightDiagnostics.heightBindGroups, [
+    {
+        label: "dynamic-test",
+        cacheCount: 1,
+        allocations: 2,
+        reuses: 1,
+        replacements: 1,
+        releases: 1,
+        liveEntries: 1,
+    },
+]);
+assert.deepEqual(liveHeightDiagnostics.heightTextures, {
+    allocations: 2,
+    reuses: 0,
+    releases: 1,
+    destroys: 1,
+});
 heightCache.dispose();
 assert.equal(textureDestroys, 2);
 assert.equal(heightCache.getDiagnostics().liveEntries, 0);
 assert.equal(heightCache.getDiagnostics().releases, 2);
+const disposedDiagnostics = getWebGPUDynamicResourceDiagnostics(resourceDevice);
+assert.deepEqual(disposedDiagnostics.heightBindGroups, []);
+assert.deepEqual(disposedDiagnostics.heightTextures, {
+    allocations: 2,
+    reuses: 0,
+    releases: 2,
+    destroys: 2,
+});
 
 console.log("WebGPU dynamic registry and resource helper checks passed");
