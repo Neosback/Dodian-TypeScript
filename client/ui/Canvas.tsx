@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { Renderer } from "../game/render/Renderer";
 import { getWebGPUTerrainComparisonCanvas } from "../render/webgpu/compare/WebGPUTerrainComparison";
 import { installWebGPUDynamicComparisons } from "../render/webgpu/dynamic/WebGPUDynamicComparisonLifecycle";
+import { installWebGPUPickingParityRecorder } from "../render/webgpu/picking/WebGPUPickingParityRecorder";
 
 export interface CanvasProps {
     renderer: Renderer;
@@ -18,6 +19,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         }
         let active = true;
         let restoreDynamicComparisons: (() => void) | undefined;
+        let restorePickingParity: (() => void) | undefined;
         host.appendChild(renderer.canvas);
         renderer.attachResizeObserver();
         requestAnimationFrame(() => renderer.forceResize());
@@ -25,6 +27,7 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
         renderer.initOnce().then(() => {
             if (!active) return;
             restoreDynamicComparisons = installWebGPUDynamicComparisons(renderer);
+            restorePickingParity = installWebGPUPickingParityRecorder(renderer);
             const comparisonCanvas = getWebGPUTerrainComparisonCanvas(renderer);
             if (comparisonCanvas && comparisonCanvas.parentNode !== host) {
                 host.appendChild(comparisonCanvas);
@@ -34,6 +37,8 @@ export function Canvas({ renderer }: CanvasProps): JSX.Element {
 
         return () => {
             active = false;
+            restorePickingParity?.();
+            restorePickingParity = undefined;
             restoreDynamicComparisons?.();
             restoreDynamicComparisons = undefined;
             renderer.stop();
