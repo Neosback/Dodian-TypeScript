@@ -8,6 +8,10 @@ import {
     syncWebGPUAnimatedLocsForMap,
 } from "../loc/WebGPUStaticLocResources";
 import {
+    WebGPUCombinedPickingController,
+    type WebGPUCombinedPickResult,
+} from "../picking/WebGPUCombinedPickingController";
+import {
     WebGPUDynamicPickingController,
     type WebGPUDynamicResolvedPickResult,
 } from "../picking/WebGPUDynamicPickingController";
@@ -29,6 +33,7 @@ interface TerrainComparisonState {
     backend: WebGPUGraphicsBackend;
     renderer: WebGPUStaticSceneRenderer;
     dynamicPicking?: WebGPUDynamicPickingController;
+    combinedPicking?: WebGPUCombinedPickingController;
     previousOnMapRemoved?: (mapX: number, mapY: number) => void;
     mapRemovedWrapper?: (mapX: number, mapY: number) => void;
     restoreMapObservers?: () => void;
@@ -126,6 +131,8 @@ function disableComparison(host: WebGLOsrsRenderer, reason: unknown): void {
     state.canvas.style.display = "none";
     try { state.dynamicPicking?.dispose(); } catch {}
     state.dynamicPicking = undefined;
+    try { state.combinedPicking?.dispose(); } catch {}
+    state.combinedPicking = undefined;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     const message = reason instanceof Error ? reason.message : String(reason);
@@ -379,6 +386,33 @@ export function requestWebGPUTerrainDynamicPick(
         });
 }
 
+/**
+ * M3 comparison-only static + actor query. Static geometry and player/NPC
+ * geometry share one depth target so the returned payload is the GPU-visible
+ * winner at the requested screen point. CPU SceneRaycaster remains authoritative.
+ */
+export function requestWebGPUTerrainCombinedPick(
+    host: WebGLOsrsRenderer,
+    canvasX: number,
+    canvasY: number,
+): Promise<WebGPUCombinedPickResult | undefined> {
+    const state = states.get(host);
+    if (!state || state.failed || !state.ready) return Promise.resolve(undefined);
+    if (!state.combinedPicking) {
+        state.combinedPicking = new WebGPUCombinedPickingController(
+            host,
+            state.renderer,
+            state.backend,
+        );
+    }
+    return state.combinedPicking
+        .request(host.sceneFrameDescription, canvasX, canvasY)
+        .catch((error) => {
+            console.warn("[WebGPU combined picking] Comparison request failed", error);
+            return undefined;
+        });
+}
+
 export function syncWebGPUTerrainTextures(
     host: WebGLOsrsRenderer,
     textures: ReadonlyMap<number, Int32Array>,
@@ -527,6 +561,8 @@ export function disposeWebGPUTerrainComparison(host: WebGLOsrsRenderer): void {
     state.visibleMapLod.length = 0;
     try { state.dynamicPicking?.dispose(); } catch {}
     state.dynamicPicking = undefined;
+    try { state.combinedPicking?.dispose(); } catch {}
+    state.combinedPicking = undefined;
     try { state.renderer.dispose(); } catch {}
     try { state.backend.dispose(); } catch {}
     state.canvas.remove();
